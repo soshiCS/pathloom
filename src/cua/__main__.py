@@ -1,0 +1,220 @@
+"""Command-line entrypoint.
+
+    python3 -m src.cua discover --goal ... --url ... --name ... --param NAME=VALUE   # LLM discovery -> artifact
+    python3 -m src.cua replay --artifact artifacts/<name>.vN.json --param NAME=VALUE  # deterministic replay
+    python3 -m src.cua discover-campaign --spec scenarios/<name>.json           # one discovery per declared
+                                                                               # scenario -> one graph artifact
+
+Replay runs a schema 1.0 artifact as a linear flow and a schema 2.0 capability graph as a graph.
+
+The production flow is: discovery -> artifact -> deterministic replay -> structured result.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import sys
+from dataclasses import asdict
+from urllib.parse import urlparse
+
+from . import artifact as artifact_module
+from . import graph as graph_module
+from .agent import DiscoveryFailed, discover
+from .campaign import CampaignError, CampaignFailed, load_spec, run_campaign
+from .escalation import ConsoleOperator, Escalator, NoOperator, SessionControl
+from .evidence import RunLog
+from .graph_replay import DEFAULT_IRREVERSIBLE_POLICY, IRREVERSIBLE_POLICIES, replay_graph
+from .planner import (DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL, ClaudePlanner,
+                      OpenAIPlanner)
+from .policy import Policy
+from .replay import replay
+from .surface import PlaywrightSurface
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "discover":
+        return cmd_discover(args)
+    if args.command == "replay":
+        return cmd_replay(args)
+    if args.command == "discover-campaign":
+        return cmd_discover_campaign(args)
+    parser.print_help()
+    return 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="python3 -m src.cua", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    commands = parser.add_subparsers(dest="command")
+
+    disc = commands.add_parser("discover", help="LLM-guided discovery; writes a capability artifact")
+    disc.add_argument("--goal", required=True, help="natural-language goal")
+    disc.add_argument("--url", required=True, help="entry URL of the target site")
+    disc.add_argument("--name", required=True, help="capability name (snake_case)")
+    disc.add_argument("--provider", choices=["anthropic", "openai"], default="anthropic",
+                      help="LLM provider used during discovery (default: anthropic)")
+    disc.add_argument("--model", default=None,
+                      help="provider model id (defaults to ANTHROPIC_MODEL or OPENAI_MODEL)")
+    disc.add_argument("--max-steps", type=int, default=15)
+    disc.add_argument("--outcome", action="append", default=[], metavar="CODE=TEXT",
+                      help="extra business outcome identified by on-screen text, e.g. invalid_credentials='do not match'")
+    disc.add_argument("--missing-outcome", action="append", default=[], metavar="CODE=TEXT",
+                      help="extra business outcome identified by absent text, e.g. product_not_found='{{product_name}}'")
+    add_shared_run_options(disc)
+
+    camp = commands.add_parser("discover-campaign",
+                               help="LLM-guided discovery of every scenario declared in a JSON spec, merged into "
+                                    "one capability graph")
+    camp.add_argument("--spec", required=True,
+                      help="path to the campaign JSON (name, goal, url, selectors, scenarios)")
+    camp.add_argument("--provider", choices=["anthropic", "openai"], default="anthropic",
+                      help="LLM provider used during discovery (default: anthropic)")
+    camp.add_argument("--model", default=None,
+                      help="provider model id (defaults to ANTHROPIC_MODEL or OPENAI_MODEL)")
+    camp.add_argument("--max-steps", type=int, default=15)
+    add_shared_run_options(camp, params=False)
+
+    rep = commands.add_parser("replay", help="deterministic replay of a saved artifact (no LLM)")
+    rep.add_argument("--artifact", required=True, help="path to artifacts/<name>.vN.json")
+    rep.add_argument("--irreversible-policy", choices=IRREVERSIBLE_POLICIES, default=DEFAULT_IRREVERSIBLE_POLICY,
+                     help="schema 2.0 graphs: what to do at an action whose effect is irreversible "
+                          "(default: confirm with a human; unknown effects always need a human)")
+    add_shared_run_options(rep)
+    return parser
+
+
+def add_shared_run_options(sub: argparse.ArgumentParser, params: bool = True) -> None:
+    if params:   # a campaign takes its parameters and sensitivity from the spec
+        sub.add_argument("--param", action="append", default=[], metavar="NAME=VALUE", help="input parameter")
+        sub.add_argument("--sensitive", action="append", default=[], metavar="NAME",
+                         help="mark a parameter as sensitive (never shown to the model or written to disk)")
+    sub.add_argument("--allow-host", action="append", default=[], help="allowlisted host (default: the entry host)")
+    sub.add_argument("--operator", choices=["console", "none"], default="console",
+                     help="console = a human can take over via the terminal; none = unattended")
+    sub.add_argument("--headed", action="store_true", help="show the browser window")
+    sub.add_argument("--quiet", action="store_true", help="do not echo log events to stderr")
+
+
+# ---------- commands ----------
+
+def cmd_discover(args: argparse.Namespace) -> int:
+    params = parse_params(args.param)
+    sensitive = set(args.sensitive)
+    secrets = tuple(str(params[name]) for name in sensitive if name in params)
+    log = RunLog("discovery", secrets=secrets, echo=not args.quiet)
+    policy = Policy(allowed_hosts=args.allow_host or [urlparse(args.url).hostname or ""])
+    extra_outcomes = [{"code": code, "kind": "business", "source": "reviewer", "detect": {"text_contains": text}}
+                      for code, text in (item.split("=", 1) for item in args.outcome)]
+    extra_outcomes += [{"code": code, "kind": "business", "source": "reviewer", "detect": {"text_missing": text}}
+                       for code, text in (item.split("=", 1) for item in args.missing_outcome)]
+
+    surface = PlaywrightSurface(headless=not args.headed, secrets=secrets)
+    escalator = Escalator(make_operator(args), SessionControl(), log)
+    try:
+        built = discover(goal=args.goal, name=args.name, params=params, surface=surface,
+                         planner=make_planner(args), policy=policy, escalator=escalator, log=log,
+                         entry_url=args.url, sensitive=sensitive, max_steps=args.max_steps,
+                         extra_outcomes=extra_outcomes)
+        path = artifact_module.save(built, secrets)
+        log.event("artifact_saved", path=str(path))
+        evidence_dir = log.copy_to_evidence()
+        shutil.copy2(path, evidence_dir / path.name)
+        print(f"\nDiscovery succeeded. Artifact: {path}\nEvidence: {evidence_dir}")
+        return 0
+    except DiscoveryFailed as error:
+        log.event("discovery_failed", error=str(error))
+        log.screenshot(surface, "failed")
+        evidence_dir = log.copy_to_evidence()
+        print(f"\nDiscovery failed: {error}\nEvidence: {evidence_dir}")
+        return 2
+    finally:
+        surface.close()
+
+
+def cmd_discover_campaign(args: argparse.Namespace) -> int:
+    try:
+        spec = load_spec(args.spec)
+    except CampaignError as error:
+        print(f"Cannot load campaign spec: {error}")
+        return 2
+    allowed_hosts = args.allow_host or [urlparse(spec.url).hostname or ""]
+    try:
+        result = run_campaign(
+            spec, surface_factory=lambda secrets: PlaywrightSurface(headless=not args.headed, secrets=secrets),
+            planner_factory=lambda scenario: make_planner(args), operator=make_operator(args),
+            allowed_hosts=allowed_hosts, max_steps=args.max_steps, echo=not args.quiet, spec_path=args.spec)
+    except CampaignFailed as error:
+        print(f"\nCampaign failed: {error}\nNo artifact was saved. Summary: {error.summary_path}")
+        return 2
+    print(f"\nCampaign succeeded: {len(result.scenarios)} scenario(s) merged into {result.artifact_path}"
+          f"\nSummary: {result.summary_path}")
+    return 0
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    params = parse_params(args.param)
+    secrets = tuple(str(params[name]) for name in args.sensitive if name in params)
+    log = RunLog("replay", secrets=secrets, echo=not args.quiet)
+    try:
+        loaded = load_any_version(args.artifact)
+    except artifact_module.ArtifactError as error:
+        print(f"Cannot load artifact: {error}")
+        return 2
+    policy = Policy(allowed_hosts=args.allow_host or list(loaded.surface.get("allowed_hosts") or [])
+                    or [urlparse(loaded.surface["entry_url"]).hostname or ""])
+
+    surface = PlaywrightSurface(headless=not args.headed, secrets=secrets)
+    escalator = Escalator(make_operator(args), SessionControl(), log)
+    try:
+        if loaded.schema_version == graph_module.GRAPH_SCHEMA_VERSION:
+            result = replay_graph(loaded, params, surface, policy, escalator, log,
+                                  irreversible_policy=args.irreversible_policy)
+        else:
+            result = replay(loaded, params, surface, policy, escalator, log)
+    finally:
+        surface.close()
+    evidence_dir = log.copy_to_evidence()
+    (evidence_dir / "result.json").write_text(json.dumps(asdict(result), indent=2), encoding="utf-8")
+    print("\nReplay result:")
+    print(json.dumps(asdict(result), indent=2))
+    print(f"Evidence: {evidence_dir}")
+    return 0 if result.status in ("success", "business_outcome") else 2
+
+
+# ---------- helpers ----------
+
+def load_any_version(path: str):
+    """A 1.0 artifact for the linear engine, or a 2.0 graph for the graph engine; never converted."""
+    data = artifact_module.read_json(path)
+    version = data.get("schema_version") if isinstance(data, dict) else None
+    if version == graph_module.GRAPH_SCHEMA_VERSION:
+        return graph_module.load_graph(path)
+    return artifact_module.load(path)
+
+
+def parse_params(items: list[str]) -> dict:
+    params = {}
+    for item in items:
+        if "=" not in item:
+            raise SystemExit(f"--param expects NAME=VALUE, got {item!r}")
+        name, value = item.split("=", 1)
+        params[name.strip()] = value
+    return params
+
+
+def make_operator(args: argparse.Namespace):
+    return ConsoleOperator() if args.operator == "console" else NoOperator()
+
+
+def make_planner(args: argparse.Namespace):
+    """Construct only the provider selected for this discovery run."""
+    if args.provider == "openai":
+        return OpenAIPlanner(args.model or DEFAULT_OPENAI_MODEL)
+    return ClaudePlanner(args.model or DEFAULT_ANTHROPIC_MODEL)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

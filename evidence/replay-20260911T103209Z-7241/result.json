@@ -1,0 +1,17 @@
+{
+  "status": "success",
+  "outputs": {
+    "product_name": "Sauce Labs Backpack",
+    "subtotal": 29.99,
+    "tax": 2.4,
+    "total": 32.39
+  },
+  "outcome_code": null,
+  "step_id": null,
+  "expected": null,
+  "observed": null,
+  "recoveries": [
+    "s1: transient error (navigation to https://www.saucedemo.com/ timed out); retry 1"
+  ],
+  "interventions": []
+}

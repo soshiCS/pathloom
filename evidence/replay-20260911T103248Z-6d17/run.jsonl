@@ -1,0 +1,18 @@
+{"seq": 1, "t": 0.298, "ts": "2026-09-11T10:32:48.935+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "replay_started", "capability": "checkout_review", "version": 1, "status": "draft", "params": {"password": "[REDACTED]", "first_name": "Test", "last_name": "User", "username": "locked_out_user", "product_name": "Sauce Labs Backpack", "postal_code": "10001"}, "steps": 15}
+{"seq": 2, "t": 0.868, "ts": "2026-09-11T10:32:49.505+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "policy_checked", "step_id": "s1", "decision": "allow", "reason": ""}
+{"seq": 3, "t": 1.016, "ts": "2026-09-11T10:32:49.653+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "acted", "step_id": "s1", "action": "navigate", "value": "https://www.saucedemo.com/"}
+{"seq": 4, "t": 1.584, "ts": "2026-09-11T10:32:50.222+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "checkpoint_passed", "step_id": "s1", "checkpoint": {"text_contains": "Accepted usernames are:"}}
+{"seq": 5, "t": 2.145, "ts": "2026-09-11T10:32:50.782+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "policy_checked", "step_id": "s2", "decision": "allow", "reason": ""}
+{"seq": 6, "t": 2.705, "ts": "2026-09-11T10:32:51.342+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "target_resolved", "step_id": "s2", "rung": 0, "strategy": "role", "drift_signal": false}
+{"seq": 7, "t": 2.74, "ts": "2026-09-11T10:32:51.377+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "acted", "step_id": "s2", "action": "type", "value": "[typed]"}
+{"seq": 8, "t": 3.3, "ts": "2026-09-11T10:32:51.938+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "checkpoint_passed", "step_id": "s2", "checkpoint": {"text_contains": "Password"}}
+{"seq": 9, "t": 3.86, "ts": "2026-09-11T10:32:52.497+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "policy_checked", "step_id": "s3", "decision": "allow", "reason": ""}
+{"seq": 10, "t": 4.425, "ts": "2026-09-11T10:32:53.063+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "target_resolved", "step_id": "s3", "rung": 0, "strategy": "role", "drift_signal": false}
+{"seq": 11, "t": 4.453, "ts": "2026-09-11T10:32:53.090+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "acted", "step_id": "s3", "action": "type", "value": "[typed]"}
+{"seq": 12, "t": 5.021, "ts": "2026-09-11T10:32:53.658+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "checkpoint_passed", "step_id": "s3", "checkpoint": {"text_contains": "Login"}}
+{"seq": 13, "t": 5.587, "ts": "2026-09-11T10:32:54.225+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "policy_checked", "step_id": "s4", "decision": "allow", "reason": ""}
+{"seq": 14, "t": 6.151, "ts": "2026-09-11T10:32:54.789+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "target_resolved", "step_id": "s4", "rung": 0, "strategy": "role", "drift_signal": false}
+{"seq": 15, "t": 6.183, "ts": "2026-09-11T10:32:54.820+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "acted", "step_id": "s4", "action": "click", "value": null}
+{"seq": 16, "t": 6.742, "ts": "2026-09-11T10:32:55.380+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "business_outcome", "step_id": "s4", "code": "user_locked_out"}
+{"seq": 17, "t": 6.765, "ts": "2026-09-11T10:32:55.402+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "screenshot", "label": "final-business_outcome", "path": "logs/replay-20260911T103248Z-6d17/016-final-business_outcome.png"}
+{"seq": 18, "t": 6.765, "ts": "2026-09-11T10:32:55.403+00:00", "run_id": "replay-20260911T103248Z-6d17", "event": "replay_finished", "status": "business_outcome", "outcome_code": "user_locked_out", "step_id": "s4", "outputs": {}, "recoveries": []}

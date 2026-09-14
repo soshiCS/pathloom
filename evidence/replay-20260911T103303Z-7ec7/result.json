@@ -1,0 +1,10 @@
+{
+  "status": "business_outcome",
+  "outputs": {},
+  "outcome_code": "checkout_info_missing",
+  "step_id": "s11",
+  "expected": "{'text_contains': 'Checkout: Overview'}",
+  "observed": "is required",
+  "recoveries": [],
+  "interventions": []
+}

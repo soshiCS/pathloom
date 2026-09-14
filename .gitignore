@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+node_modules/
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+# Working logs are regenerated on every run; the curated copies live in evidence/.
+logs/*
+!logs/.gitkeep
+Assignment A — Computer-Use Automation System.pdf

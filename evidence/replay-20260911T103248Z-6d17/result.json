@@ -1,0 +1,10 @@
+{
+  "status": "business_outcome",
+  "outputs": {},
+  "outcome_code": "user_locked_out",
+  "step_id": "s4",
+  "expected": "{'text_contains': 'Products'}",
+  "observed": "locked out",
+  "recoveries": [],
+  "interventions": []
+}

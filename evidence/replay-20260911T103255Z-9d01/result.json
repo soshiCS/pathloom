@@ -1,0 +1,10 @@
+{
+  "status": "business_outcome",
+  "outputs": {},
+  "outcome_code": "product_not_listed",
+  "step_id": "s5",
+  "expected": "{'text_contains': 'Remove'}",
+  "observed": "missing: Sauce Labs Unicorn",
+  "recoveries": [],
+  "interventions": []
+}

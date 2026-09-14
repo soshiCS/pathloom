@@ -1,0 +1,20 @@
+{
+  "status": "failure",
+  "outputs": {},
+  "outcome_code": "risky_step_not_confirmed",
+  "step_id": "s_finish",
+  "expected": "human approval",
+  "observed": "'Finish' looks irreversible; a human must confirm",
+  "recoveries": [],
+  "interventions": [
+    {
+      "step_id": "s_finish",
+      "kind": "confirm",
+      "reason": "confirmation required: 'Finish' looks irreversible; a human must confirm",
+      "resolved": false,
+      "disposition": "abort",
+      "human_actions": [],
+      "note": "no operator available"
+    }
+  ]
+}

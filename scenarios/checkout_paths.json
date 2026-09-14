@@ -1,0 +1,37 @@
+{
+  "name": "checkout_paths",
+  "goal": "Log in to SauceDemo with the supplied test credentials, add {{product_name}} to the cart, open the cart the way the cart_route parameter says, fill in the checkout information, reach the Checkout Overview page and return the total. Stop before clicking Finish.",
+  "url": "https://www.saucedemo.com/",
+  "selectors": ["cart_route", "zip_source"],
+  "scenarios": [
+    {
+      "name": "link_postal",
+      "params": {
+        "username": "standard_user", "password": "secret_sauce", "product_name": "Sauce Labs Backpack",
+        "first_name": "Test", "last_name": "User",
+        "cart_route": "cart_link", "zip_source": "postal_code", "postal_code": "10001"
+      },
+      "sensitive": ["password"]
+    },
+    {
+      "name": "url_postal",
+      "params": {
+        "username": "standard_user", "password": "secret_sauce", "product_name": "Sauce Labs Backpack",
+        "first_name": "Test", "last_name": "User",
+        "cart_route": "cart_url", "cart_url": "https://www.saucedemo.com/cart.html",
+        "zip_source": "postal_code", "postal_code": "10001"
+      },
+      "sensitive": ["password"]
+    },
+    {
+      "name": "url_phone",
+      "params": {
+        "username": "standard_user", "password": "secret_sauce", "product_name": "Sauce Labs Backpack",
+        "first_name": "Test", "last_name": "User",
+        "cart_route": "cart_url", "cart_url": "https://www.saucedemo.com/cart.html",
+        "zip_source": "phone", "phone": "+15551234567"
+      },
+      "sensitive": ["password", "phone"]
+    }
+  ]
+}
