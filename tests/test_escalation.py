@@ -99,3 +99,67 @@ def test_replay_resume_rechecks_the_step_before_redoing_it():
     assert result.status == "success"
     assert '"step_already_satisfied"' in log.path.read_text()
     assert surface.actions.count(("click", "Login", "")) == 2   # once by automation, once by the human
+
+
+# ---------- intervention context ----------
+
+def test_replay_handoffs_carry_the_capability_goal():
+    from src.cua.graph import from_linear
+    from src.cua.graph_replay import replay_graph
+    from tests.context import Step, ladder
+
+    goal = checkout_artifact().description
+    stuck = RecordingOperator(disposition="abort")
+    log = RunLog("replay")
+    replay(checkout_artifact(), PARAMS, FakeSurface(faults=["verification"]), Policy(allowed_hosts=HOSTS),
+           Escalator(stuck, SessionControl(), log), log)
+    assert stuck.requests[0].goal == goal and stuck.requests[0].capability == "checkout_review"
+
+    finish = Step(id="s16", action="click", target=ladder("button", "Finish"),
+                  checkpoint={"text_contains": "Thank you"}, risk="risky")
+    confirm = RecordingOperator(disposition="deny")
+    log = RunLog("replay")
+    replay(checkout_artifact(extra_step=finish), PARAMS, FakeSurface(), Policy(allowed_hosts=HOSTS),
+           Escalator(confirm, SessionControl(), log), log)
+    assert confirm.requests[0].kind == "confirm" and confirm.requests[0].goal == goal
+
+    graph_stuck, graph_confirm = RecordingOperator(disposition="abort"), RecordingOperator(disposition="deny")
+    log = RunLog("replay")
+    replay_graph(from_linear(checkout_artifact()), PARAMS, FakeSurface(faults=["verification"]),
+                 Policy(allowed_hosts=HOSTS), Escalator(graph_stuck, SessionControl(), log), log)
+    log = RunLog("replay")
+    replay_graph(from_linear(checkout_artifact(extra_step=finish)), PARAMS, FakeSurface(),
+                 Policy(allowed_hosts=HOSTS), Escalator(graph_confirm, SessionControl(), log), log)
+    assert graph_stuck.requests[0].goal == goal and graph_confirm.requests[0].goal == goal
+    assert graph_confirm.requests[0].kind == "confirm"
+    assert '"goal": "add a product and read the checkout overview"' in log.path.read_text()
+
+
+def test_discovery_handoffs_carry_the_goal():
+    from src.cua.agent import discover
+    from tests.scripted_planner import ScriptedPlanner, ScriptedStep, checkout_script
+
+    stuck = RecordingOperator(disposition="abort")
+    log = RunLog("discovery")
+    with pytest.raises(Exception, match="aborted"):
+        discover(goal="read the totals", name="checkout_review", params=dict(PARAMS), surface=FakeSurface(),
+                 planner=ScriptedPlanner([ScriptedStep("stuck")]), policy=Policy(allowed_hosts=HOSTS),
+                 escalator=Escalator(stuck, SessionControl(), log), log=log, entry_url=ENTRY)
+    assert stuck.requests[0].goal == "read the totals" and stuck.requests[0].kind == "stuck"
+
+    confirm = RecordingOperator(disposition="deny")
+    script = checkout_script()
+    script.insert(-1, ScriptedStep("click", "button", "Finish", expect="Thank you"))
+    log = RunLog("discovery")
+    discover(goal="read the totals", name="checkout_review", params=dict(PARAMS), surface=FakeSurface(),
+             planner=ScriptedPlanner(script), policy=Policy(allowed_hosts=HOSTS),
+             escalator=Escalator(confirm, SessionControl(), log), log=log, entry_url=ENTRY, max_steps=25)
+    assert confirm.requests[0].kind == "confirm" and confirm.requests[0].goal == "read the totals"
+
+
+def test_console_operator_shows_the_goal():
+    output = io.StringIO()
+    shown = request()
+    shown.goal = "add a product and read the checkout overview"
+    ConsoleOperator(io.StringIO("abort\n"), output).handle(shown, FakeSurface())
+    assert "goal: add a product and read the checkout overview" in output.getvalue()

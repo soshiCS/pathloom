@@ -35,10 +35,13 @@ Design write-up: [`REPORT.md`](REPORT.md). Assignment: [`docs/assignment.pdf`](d
 | `src/cua/graph_replay.py` | Deterministic replay of schema 2.0 graphs on the same helpers: guard-based edge selection, effect policy (`--irreversible-policy`), per-node retry safety |
 | `src/cua/campaign.py` | Human-declared multi-scenario discovery: JSON spec, one discovery run per scenario, campaign evidence and summary |
 | `src/cua/merge.py` | Conservative prefix-tree merge of verified linear traces into one graph, with conditional inputs and campaign provenance |
+| `src/cua/lifecycle.py` | Draft/approved gate for unattended replay, version-aware loading and engine dispatch, replay evidence bundles (result, artifact copy, manifest with SHA-256) |
+| `src/cua/stability.py` | N fresh unattended replays with `irreversible-policy: deny`, metrics and eligibility in `report.json` |
+| `src/cua/approval.py` | Local review record: eligible reports for the exact draft digest (one per selector assignment for a campaign graph) become the next `approved` version |
 | `src/cua/policy.py` | Host/action allowlists, blocked controls, risky-action classification, redaction |
 | `src/cua/escalation.py` | `SessionControl` ownership, `Escalator`, `ConsoleOperator` (drives the same live session) |
 | `src/cua/evidence.py` | Redacted JSONL run log, screenshots, evidence bundles |
-| `src/cua/__main__.py` | CLI: `discover`, `discover-campaign`, `replay` (picks the engine from the artifact's `schema_version`) |
+| `src/cua/__main__.py` | CLI: `discover`, `discover-campaign`, `replay` (engine picked by `schema_version`), `stability`, `approve` |
 | `scenarios/` | Campaign specifications (`checkout_paths.json` declares three routes through the shop) |
 | `tests/` | Deterministic offline tests on an in-memory fake shop surface and a scripted planner |
 | `artifacts/` | Saved capability artifacts |
@@ -174,13 +177,52 @@ python -m src.cua replay --artifact artifacts/checkout_paths.v1.json \
   --param zip_source=postal_code --param postal_code=10001
 ```
 
+**7. Lifecycle: draft, stability, approval, unattended replay.** Discovery and campaigns produce
+drafts. A draft can be replayed only supervised (`--operator console`, with a warning) or by the
+`stability` command, which replays one invocation N times, each on a fresh browser and session,
+unattended, with `irreversible-policy: deny`, and writes `evidence/stability-<id>/report.json`:
+artifact identity and SHA-256 digest, parameter names (never values), counts by status and
+outcome, success and clean-run rates, recoveries, interventions and locator drift signals, a
+record per run linking its evidence, and `eligible_for_approval` (at least three completed runs,
+all `success`, no intervention, one digest throughout; recoveries and locator fallbacks are
+reported but do not disqualify). `approve` checks every report against the draft's exact digest,
+re-derives every summary field and the eligibility verdict from the report's own run records
+(an edited flag or total is refused), and requires one report per selector assignment admitted
+by the graph's entry gate, cross-checked against campaign provenance when present, then saves
+the next immutable version with `status: approved` and approval provenance (reviewer, timestamp,
+source version and digest, report paths and digests, tested assignments). The draft file is
+never modified. `replay --operator none` refuses a draft with `artifact_not_approved` before any
+browser exists, and still writes an evidence bundle; the same rule is enforced inside the
+library (`lifecycle.replay_any` takes an explicit purpose: supervised, stability or unattended),
+so a caller that already opened a surface gets the refusal before any action. This is a local
+review workflow, not cryptographic signing or authentication: anyone who can write to
+`artifacts/` can approve, and a report rewritten consistently end to end would pass the checks.
+
+```bash
+python -m src.cua stability --artifact artifacts/checkout_review.v1.json --runs 3 \
+  --param username=standard_user --param password=secret_sauce --sensitive password \
+  --param "product_name=Sauce Labs Backpack" --param first_name=Test --param last_name=User --param postal_code=10001
+python -m src.cua approve --artifact artifacts/checkout_review.v1.json \
+  --report evidence/stability-<id>/report.json --reviewer soroush
+python -m src.cua replay --artifact artifacts/checkout_review.v2.json --operator none ...
+```
+
+Every replay bundle under `evidence/replay-<id>/` holds `run.jsonl`, screenshots, `result.json`
+(redacted with the run's secret values, like the log), a byte-exact copy of the artifact that
+ran, and `manifest.json` (artifact path, schema and capability versions, status, SHA-256,
+parameter names only).
+
+Deliberate limitation: stability approval targets prepare-only or read-only flows that finish
+before any irreversible effect, which is why it runs with `deny`. Repeatedly testing a flow that
+really commits would need a sandbox, an idempotency key, or a rollback mechanism.
+
 ## Tests
 
 ```bash
 python -m pytest
 ```
 
-189 tests, all deterministic and offline: policy (allowlists, blocked controls, `Finish` and
+226 tests, all deterministic and offline: policy (allowlists, blocked controls, `Finish` and
 other irreversible actions requiring confirmation, redaction), artifact (word-boundary
 parameterization of values and locators, validation, versioning, save/load, refusal to save a
 leaked secret), replay (determinism, a subprocess proof that the replay module never imports
@@ -198,8 +240,13 @@ approve/deny, engine dispatch by schema version, no planner or SDK import), camp
 identical and prefix traces, no suffix merging, deterministic ids, conflicts rejected, conditional
 inputs, sensitive path-specific values off disk, a failed or crashing scenario saving nothing with
 its session closed and secrets redacted, merged graph replayed per scenario and refusing undeclared
-selector combinations before any action), escalation (ownership transfer, same-session operation, redacted
-typed password, resume/restart), discovery (fully parameterized recording, checkpoints for the
+selector combinations before any action), lifecycle (stability runs on both schemas with fresh
+closed sessions, metrics and eligibility, recoveries and drift reported without disqualifying,
+irreversible and unknown actions denied, crashes recorded, no planner import; approval creating an
+immutable approved version with the draft byte-identical, digest, eligibility, coverage and
+malformed-report rejections, no browser; the unattended gate blocking drafts with an evidence
+bundle and admitting approved artifacts), escalation (ownership transfer, same-session operation, redacted
+typed password, resume/restart, the goal on every handoff), discovery (fully parameterized recording, checkpoints for the
 important states, typed outputs, outcomes, password never reaching the planner, `Finish`
 requiring approval during discovery, denials, stuck, max steps, and Anthropic/OpenAI tool-call binding). The browser
 and the LLM are replaced at their protocol boundaries by `tests/fake_surface.py` and

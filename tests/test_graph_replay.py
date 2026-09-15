@@ -608,7 +608,7 @@ def test_cli_replays_each_schema_version_with_its_own_engine(monkeypatch, tmp_pa
     graph_path = save_graph(from_linear(checkout_artifact()), secrets=("secret_sauce",),
                             path=tmp_path / "checkout_review.graph.json")
     finish_path = save_graph(finish_graph(), secrets=("secret_sauce",), path=tmp_path / "finish.graph.json")
-    common = ["--operator", "none", "--quiet", "--sensitive", "password"]
+    common = ["--operator", "console", "--quiet", "--sensitive", "password"]   # drafts: supervised only
     common += [f"--param={k}={v}" for k, v in PARAMS.items()]
 
     assert main(["replay", "--artifact", str(linear_path), *common]) == 0

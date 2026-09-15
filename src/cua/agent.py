@@ -147,7 +147,7 @@ def discover(
             history.append(action)
             continue
         if action.kind == "stuck":
-            handle_stuck(action, observation, name, escalator, surface, log)
+            handle_stuck(action, observation, name, goal, escalator, surface, log)
             history.append(action)
             continue
 
@@ -156,7 +156,7 @@ def discover(
         verdict = policy.check(replace(action, value=substitute(action.value, params)), observation.url)
         log.event("policy_checked", decision=verdict.decision, reason=verdict.reason)
         if verdict.decision == "confirm":
-            verdict = confirm_with_human(action, observation, name, escalator, surface, log, verdict.reason)
+            verdict = confirm_with_human(action, observation, name, goal, escalator, surface, log, verdict.reason)
         if verdict.decision == "deny":
             action.result = f"denied: {verdict.reason}"
             history.append(action)
@@ -343,10 +343,10 @@ def depends_on_extracted_values(expected: str, recorder: Recorder) -> bool:
     return any(spec.get("example") and spec["example"] in expected for spec in recorder.outputs.values())
 
 
-def handle_stuck(action: Action, observation: Observation, name: str, escalator: Escalator,
+def handle_stuck(action: Action, observation: Observation, name: str, goal: str, escalator: Escalator,
                  surface: Surface, log: RunLog) -> None:
     """The planner cannot proceed: bring a human in on the same session, then let the planner look again."""
-    request = InterventionRequest(run_id=log.run_id, capability=name, step_id=None, kind="stuck",
+    request = InterventionRequest(run_id=log.run_id, capability=name, goal=goal, step_id=None, kind="stuck",
                                   reason=f"planner is stuck: {action.reason}",
                                   observed=visible_text(observation)[:400], screenshot=None)
     result = escalator.request(request, surface)
@@ -355,12 +355,12 @@ def handle_stuck(action: Action, observation: Observation, name: str, escalator:
     action.result = f"human intervened ({len(result.human_actions)} manual actions); re-observe the screen"
 
 
-def confirm_with_human(action: Action, observation: Observation, name: str, escalator: Escalator,
+def confirm_with_human(action: Action, observation: Observation, name: str, goal: str, escalator: Escalator,
                        surface: Surface, log: RunLog, reason: str):
     """Risky actions are never taken on the model's say-so; a person approves or denies."""
     from .policy import Verdict
 
-    request = InterventionRequest(run_id=log.run_id, capability=name, step_id=None, kind="confirm",
+    request = InterventionRequest(run_id=log.run_id, capability=name, goal=goal, step_id=None, kind="confirm",
                                   reason=f"confirmation required: {reason}",
                                   observed=f"planner wants to {action.kind} {describe(action.target)}; {action.reason}",
                                   screenshot=None)

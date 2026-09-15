@@ -4,8 +4,13 @@
     python3 -m src.cua replay --artifact artifacts/<name>.vN.json --param NAME=VALUE  # deterministic replay
     python3 -m src.cua discover-campaign --spec scenarios/<name>.json           # one discovery per declared
                                                                                # scenario -> one graph artifact
+    python3 -m src.cua stability --artifact ... --runs 3 --param NAME=VALUE    # N fresh unattended replays -> report
+    python3 -m src.cua approve --artifact ... --report <report.json> --reviewer NAME  # draft -> approved version
 
 Replay runs a schema 1.0 artifact as a linear flow and a schema 2.0 capability graph as a graph.
+Lifecycle: draft -> supervised replay or stability runs -> approve -> approved -> unattended replay.
+An unattended replay (--operator none) of a draft stops with artifact_not_approved before any
+browser exists; approval is a local review record backed by stability reports, not a signature.
 
 The production flow is: discovery -> artifact -> deterministic replay -> structured result.
 """
@@ -21,14 +26,17 @@ from urllib.parse import urlparse
 from . import artifact as artifact_module
 from . import graph as graph_module
 from .agent import DiscoveryFailed, discover
+from .approval import ApprovalError, approve
 from .campaign import CampaignError, CampaignFailed, load_spec, run_campaign
 from .escalation import ConsoleOperator, Escalator, NoOperator, SessionControl
 from .evidence import RunLog
-from .graph_replay import DEFAULT_IRREVERSIBLE_POLICY, IRREVERSIBLE_POLICIES, replay_graph
+from .graph_replay import DEFAULT_IRREVERSIBLE_POLICY, IRREVERSIBLE_POLICIES
+from .lifecycle import (SUPERVISED, UNATTENDED, is_approved, load_any_version, not_approved_result, policy_for,
+                        replay_any, write_bundle)
 from .planner import (DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL, ClaudePlanner,
                       OpenAIPlanner)
 from .policy import Policy
-from .replay import replay
+from .stability import run_stability
 from .surface import PlaywrightSurface
 
 
@@ -41,6 +49,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_replay(args)
     if args.command == "discover-campaign":
         return cmd_discover_campaign(args)
+    if args.command == "stability":
+        return cmd_stability(args)
+    if args.command == "approve":
+        return cmd_approve(args)
     parser.print_help()
     return 1
 
@@ -83,17 +95,32 @@ def build_parser() -> argparse.ArgumentParser:
                      help="schema 2.0 graphs: what to do at an action whose effect is irreversible "
                           "(default: confirm with a human; unknown effects always need a human)")
     add_shared_run_options(rep)
+
+    stab = commands.add_parser("stability", help="replay one invocation N times, unattended and on a fresh session "
+                                                 "each time, and write a report that approval can use")
+    stab.add_argument("--artifact", required=True, help="path to artifacts/<name>.vN.json (either schema)")
+    stab.add_argument("--runs", type=int, default=3, help="number of replays (default: 3)")
+    add_shared_run_options(stab, operator=False)
+
+    appr = commands.add_parser("approve", help="turn a draft into the next approved version, given eligible "
+                                               "stability reports (a local review record, not a signature)")
+    appr.add_argument("--artifact", required=True, help="path to the draft artifact")
+    appr.add_argument("--report", action="append", required=True, metavar="REPORT_JSON",
+                      help="stability report; repeat once per selector assignment for a campaign graph")
+    appr.add_argument("--reviewer", required=True, help="who reviewed the evidence")
     return parser
 
 
-def add_shared_run_options(sub: argparse.ArgumentParser, params: bool = True) -> None:
+def add_shared_run_options(sub: argparse.ArgumentParser, params: bool = True, operator: bool = True) -> None:
     if params:   # a campaign takes its parameters and sensitivity from the spec
         sub.add_argument("--param", action="append", default=[], metavar="NAME=VALUE", help="input parameter")
         sub.add_argument("--sensitive", action="append", default=[], metavar="NAME",
                          help="mark a parameter as sensitive (never shown to the model or written to disk)")
     sub.add_argument("--allow-host", action="append", default=[], help="allowlisted host (default: the entry host)")
-    sub.add_argument("--operator", choices=["console", "none"], default="console",
-                     help="console = a human can take over via the terminal; none = unattended")
+    if operator:  # stability runs are unattended by definition
+        sub.add_argument("--operator", choices=["console", "none"], default="console",
+                         help="console = a human can take over via the terminal; none = unattended (approved "
+                              "artifacts only)")
     sub.add_argument("--headed", action="store_true", help="show the browser window")
     sub.add_argument("--quiet", action="store_true", help="do not echo log events to stderr")
 
@@ -163,37 +190,70 @@ def cmd_replay(args: argparse.Namespace) -> int:
     except artifact_module.ArtifactError as error:
         print(f"Cannot load artifact: {error}")
         return 2
-    policy = Policy(allowed_hosts=args.allow_host or list(loaded.surface.get("allowed_hosts") or [])
-                    or [urlparse(loaded.surface["entry_url"]).hostname or ""])
+    if not is_approved(loaded):
+        if args.operator == "none":
+            # The gate: no browser, no action; still a structured result and an evidence bundle.
+            result = not_approved_result(loaded)
+            log.event("replay_blocked", capability=loaded.name, version=loaded.version, status=loaded.status,
+                      outcome_code=result.outcome_code, reason=result.observed)
+            print(f"Refusing unattended replay: {result.observed}")
+            return finish_replay(args, log, loaded, result, params)
+        warning = (f"WARNING: {loaded.name} v{loaded.version} has status {loaded.status!r}; this is a supervised "
+                   f"test run. Run `stability` and `approve` before replaying it unattended.")
+        log.event("draft_warning", capability=loaded.name, version=loaded.version, status=loaded.status)
+        print(warning)
 
     surface = PlaywrightSurface(headless=not args.headed, secrets=secrets)
     escalator = Escalator(make_operator(args), SessionControl(), log)
     try:
-        if loaded.schema_version == graph_module.GRAPH_SCHEMA_VERSION:
-            result = replay_graph(loaded, params, surface, policy, escalator, log,
-                                  irreversible_policy=args.irreversible_policy)
-        else:
-            result = replay(loaded, params, surface, policy, escalator, log)
+        result = replay_any(loaded, params, surface, policy_for(loaded, args.allow_host), escalator, log,
+                            purpose=UNATTENDED if args.operator == "none" else SUPERVISED,
+                            irreversible_policy=args.irreversible_policy)
     finally:
         surface.close()
-    evidence_dir = log.copy_to_evidence()
-    (evidence_dir / "result.json").write_text(json.dumps(asdict(result), indent=2), encoding="utf-8")
+    return finish_replay(args, log, loaded, result, params)
+
+
+def finish_replay(args: argparse.Namespace, log: RunLog, loaded, result, params: dict) -> int:
+    evidence_dir = write_bundle(log, loaded, args.artifact, result, params, args.sensitive)
     print("\nReplay result:")
     print(json.dumps(asdict(result), indent=2))
     print(f"Evidence: {evidence_dir}")
     return 0 if result.status in ("success", "business_outcome") else 2
 
 
+def cmd_stability(args: argparse.Namespace) -> int:
+    params = parse_params(args.param)
+    try:
+        report_path = run_stability(
+            args.artifact, params, list(args.sensitive), args.runs,
+            surface_factory=lambda secrets: PlaywrightSurface(headless=not args.headed, secrets=secrets),
+            allowed_hosts=args.allow_host or None, echo=not args.quiet)
+    except artifact_module.ArtifactError as error:
+        print(f"Cannot load artifact: {error}")
+        return 2
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    print(f"\nStability: {report['runs_completed']}/{report['runs_requested']} runs completed, "
+          f"success rate {report['success_rate']:.0%}, clean-run rate {report['clean_run_rate']:.0%}, "
+          f"recoveries {report['total_recoveries']}, interventions {report['total_interventions']}, "
+          f"drift signals {report['total_drift_signals']}")
+    print(f"Eligible for approval: {report['eligible_for_approval']}"
+          + (f" ({'; '.join(report['ineligible_reasons'])})" if report["ineligible_reasons"] else ""))
+    print(f"Report: {report_path}")
+    return 0 if report["eligible_for_approval"] else 2
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    try:
+        path = approve(args.artifact, args.report, args.reviewer)
+    except (ApprovalError, artifact_module.ArtifactError) as error:
+        print(f"Approval refused: {error}")
+        return 2
+    print(f"Approved: {path} (from {args.artifact}, reviewed by {args.reviewer})")
+    return 0
+
+
 # ---------- helpers ----------
-
-def load_any_version(path: str):
-    """A 1.0 artifact for the linear engine, or a 2.0 graph for the graph engine; never converted."""
-    data = artifact_module.read_json(path)
-    version = data.get("schema_version") if isinstance(data, dict) else None
-    if version == graph_module.GRAPH_SCHEMA_VERSION:
-        return graph_module.load_graph(path)
-    return artifact_module.load(path)
-
 
 def parse_params(items: list[str]) -> dict:
     params = {}

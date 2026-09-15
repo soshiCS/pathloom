@@ -351,7 +351,8 @@ def check_policy(ctx: ReplayContext, step: Step, value: str | None, url: str) ->
 
 def confirmed_by_human(ctx: ReplayContext, step: Step, reason: str) -> bool:
     hint = element_hint(step)
-    request = InterventionRequest(run_id=ctx.log.run_id, capability=ctx.artifact.name, step_id=step.id,
+    request = InterventionRequest(run_id=ctx.log.run_id, capability=ctx.artifact.name,
+                                  goal=ctx.artifact.description, step_id=step.id,
                                   kind="confirm", reason=f"confirmation required: {reason}",
                                   observed=f"about to {step.action} {hint.role if hint else ''} "
                                            f"'{hint.name if hint else step.value}'", screenshot=None)
@@ -417,7 +418,8 @@ def typed_value(value: str, kind: str):
 
 def escalate(ctx: ReplayContext, step: Step, code: str, expected: str, observed: str) -> NoReturn:
     """Hand the live session to a human; translate their disposition into control flow."""
-    request = InterventionRequest(run_id=ctx.log.run_id, capability=ctx.artifact.name, step_id=step.id,
+    request = InterventionRequest(run_id=ctx.log.run_id, capability=ctx.artifact.name,
+                                  goal=ctx.artifact.description, step_id=step.id,
                                   kind="stuck", reason=f"{code}: expected {expected}", observed=observed,
                                   screenshot=None)
     result = ctx.escalator.request(request, ctx.surface)

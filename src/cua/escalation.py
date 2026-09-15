@@ -89,6 +89,8 @@ class ConsoleOperator:
     def handle(self, request: InterventionRequest, surface: Surface) -> InterventionResult:
         self.say("\n=== HUMAN INTERVENTION REQUESTED ===")
         self.say(f"capability: {request.capability}   run: {request.run_id}   step: {request.step_id}")
+        if request.goal:
+            self.say(f"goal: {request.goal}")
         self.say(f"kind: {request.kind}\nreason: {request.reason}")
         self.say(f"observed: {request.observed[:400]}")
         if request.screenshot:
@@ -165,7 +167,8 @@ class Escalator:
         # 1. Pause: capture evidence of the state the automation is stuck in.
         request.screenshot = self.log.screenshot(surface, f"escalation-{request.kind}")
         self.log.event("intervention_requested", kind=request.kind, step_id=request.step_id,
-                       reason=request.reason, observed=request.observed[:400], screenshot=request.screenshot)
+                       capability=request.capability, goal=request.goal, reason=request.reason,
+                       observed=request.observed[:400], screenshot=request.screenshot)
         # 2. Cede control. From here on only the operator may act on the surface.
         self.control.transfer(HUMAN)
         self.log.event("control_transferred", to=HUMAN)

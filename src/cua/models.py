@@ -218,6 +218,7 @@ class InterventionRequest:
     observed: str
     screenshot: str | None
     kind: str = "stuck"           # stuck (needs manual steps) | confirm (needs a yes/no on a risky action)
+    goal: str = ""                # the capability's natural-language goal, so the operator knows the job
 
 
 @dataclass
