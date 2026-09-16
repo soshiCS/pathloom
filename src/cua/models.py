@@ -40,6 +40,43 @@ class Action:
     reason: str = ""              # model's rationale — logged, never stored in the artifact
     outcomes: list[dict] = field(default_factory=list)  # declared on "done": known non-happy-path states
     result: str = ""              # filled in by the agent after acting ("ok", "denied: ...", "expected X not seen")
+    stuck_cause: str = ""         # for "stuck": perception (a needed control is not in the list) | planner | provider
+
+
+@dataclass
+class ScreenshotFrame:
+    """A masked viewport capture handed to a vision-capable planner. Bytes stay in memory; only the
+    masked image file (evidence) touches disk."""
+    png: bytes
+    width: int                    # CSS pixels: the coordinate space of the mouse
+    height: int
+    path: str = ""                # where the masked image was saved as evidence
+    scroll_x: int = 0             # scroll position at capture; exact coordinates are only valid there
+    scroll_y: int = 0
+
+
+@dataclass
+class VisualTarget:
+    """A control the vision planner points at, in the coordinate space of the screenshot it saw."""
+    role: str                     # best semantic guess (button, link, ...)
+    name: str                     # short human description
+    x: int
+    y: int
+    width: int
+    height: int
+    expect: str | None            # text that must appear after acting; the only proof replay can check
+    reason: str = ""
+    confidence: float = 0.0
+
+
+@dataclass
+class VisualDecision:
+    """One visual proposal: visual_click | visual_type | no_target, or unavailable when the provider cannot see."""
+    kind: str
+    target: VisualTarget | None = None
+    value: str | None = None      # for visual_type; may contain {{param}} placeholders
+    reason: str = ""
+    rejected: str | None = None   # why a proposal was refused by validation (out of range, low confidence, ...)
 
 
 class TransientError(Exception):

@@ -95,8 +95,14 @@ discovery never visits still classify deterministically. No live model run again
 made yet; the suite drives it through the real browser adapter with a scripted planner.
 
 Accessibility support is Chromium-specific and confined to the adapter; the seam, the artifact
-and both engines are unchanged, and screenshot vision is a planned, bounded, discovery-only
-fallback for surfaces with no usable tree, not part of this pass.
+and both engines are unchanged. For controls neither source can expose (a canvas, an unnamed
+icon) discovery has an opt-in, bounded screenshot fallback: after the planner is stuck, one
+masked viewport screenshot goes to the provider, which may propose exactly one click or type
+with a bounding box and an expected text; the proposal is validated, policy-checked, performed
+once and kept only if structured perception verifies it, with a small per-run budget and one
+attempt per unchanged screen. The recorded step keeps a coordinate rung bound to its viewport;
+replay never uses a model, uses the coordinates last, and refuses them in another viewport.
+Visual extraction is unsupported by design.
 
 Multi-tenant reuse is a layering the schema is shaped for but does not implement: a base
 artifact per vendor product, per-tenant `entry_url` and `allowed_hosts`, overlays for individual

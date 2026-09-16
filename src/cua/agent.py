@@ -9,20 +9,23 @@ by a named placeholder.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 from dataclasses import replace
 
 from . import artifact as artifact_module
-from .artifact import parameterize, parameterize_locator, substitute
+from .artifact import parameterize, parameterize_locator, placeholders_in, substitute
 from .escalation import AUTOMATION, Escalator
 from .evidence import RunLog
-from .models import Action, Artifact, InterventionRequest, Observation, Step, TransientError
-from .planner import Planner
+from .models import (Action, Artifact, Element, InterventionRequest, Locator, Observation, ScreenshotFrame, Step,
+                     TransientError)
+from .planner import Planner, VisionPlanner
 from .policy import Policy
 from .surface import Surface, is_ambiguous, locator_for, visible_text
 
 DEFAULT_MAX_STEPS = 15
+DEFAULT_MAX_VISION_ATTEMPTS = 2
 MAX_CONSECUTIVE_DENIALS = 3
 EXPECT_TIMEOUT_S = 6.0
 POLL_INTERVAL_S = 0.3
@@ -46,7 +49,7 @@ class Recorder:
     def next_id(self) -> str:
         return f"s{len(self.steps) + 1}"
 
-    def record_step(self, action: Action, risk: str, seen: Observation) -> None:
+    def record_step(self, action: Action, risk: str, seen: Observation, locator: Locator | None = None) -> None:
         # Extraction verifies itself (the pattern must match), so it carries no checkpoint.
         checkpoint = None
         if action.expect and action.kind != "extract":
@@ -54,8 +57,10 @@ class Recorder:
         target = None
         if action.target:
             # Qualify the locator by its item only when the name alone was ambiguous on screen,
-            # then parameterize it: "Add to cart" in "{{product_name}}".
-            target = parameterize_locator(locator_for(action.target, is_ambiguous(action.target, seen)), self.params)
+            # then parameterize it: "Add to cart" in "{{product_name}}". A caller may supply the
+            # ladder itself (a vision target records exact coordinates instead).
+            ladder = locator or locator_for(action.target, is_ambiguous(action.target, seen))
+            target = parameterize_locator(ladder, self.params)
         value = action.output_name if action.kind == "extract" else parameterize(action.value, self.params)
         self.steps.append(Step(id=self.next_id(), action=action.kind, target=target,
                                value=value, checkpoint=checkpoint, risk=risk))
@@ -121,6 +126,8 @@ def discover(
     extra_outcomes: list[dict] | None = None,
     output_contract: dict | None = None,
     selectors: set[str] | None = None,
+    vision: VisionPlanner | None = None,
+    max_vision_attempts: int = DEFAULT_MAX_VISION_ATTEMPTS,
 ) -> Artifact:
     """Discover a capability by driving the live surface with the planner; return its artifact.
 
@@ -129,6 +136,8 @@ def discover(
     `selectors` are inputs that choose a path rather than data the flow uses: their values are
     recorded literally, never as placeholders, so a route called "details" cannot rewrite the
     "View details" link a path happens to click.
+    `vision`, when given, is the bounded screenshot fallback (see `Vision`): tried only when the
+    planner is stuck, at most `max_vision_attempts` times per run and once per unchanged screen.
     """
     sensitive = sensitive or set()
     # Sensitive values are never shown to the model; it sees (and types) the placeholder.
@@ -148,6 +157,7 @@ def discover(
     log.screenshot(surface, "entry")
 
     consecutive_denials = 0
+    fallback = Vision(vision, max_vision_attempts, goal, visible_params, params, surface, log) if vision else None
     turn = 0
     while turn < max_steps:
         turn += 1
@@ -164,9 +174,15 @@ def discover(
             history.append(action)
             continue
         if action.kind == "stuck":
-            handle_stuck(action, observation, name, goal, escalator, surface, log)
-            history.append(action)
-            continue
+            # The structured planner cannot see a control it needs: the bounded vision fallback may
+            # propose one visual action; everything else about it (policy, acting, verification) is
+            # the normal path below.
+            visual = fallback.propose(action, observation, history) if fallback else None
+            if visual is None:
+                handle_stuck(action, observation, name, goal, escalator, surface, log)
+                history.append(action)
+                continue
+            action = visual
 
         # Policy check happens before anything touches the surface, on the concrete value the surface
         # would receive: a navigation to "{{cart_url}}" is judged by the host it really goes to.
@@ -184,7 +200,11 @@ def discover(
         consecutive_denials = 0
 
         perform(action, params, surface, log)
-        verify_and_record(action, observation, params, policy, recorder, surface, log)
+        if action.target is not None and action.target.source == "vision":
+            verify_vision_action(action, observation, params, policy, recorder, surface, log, fallback, name, goal,
+                                 escalator)
+        else:
+            verify_and_record(action, observation, params, policy, recorder, surface, log)
         history.append(action)
     else:
         log.screenshot(surface, "max-steps")
@@ -200,6 +220,8 @@ def discover(
         success=success, run_id=log.run_id, sensitive=sensitive, planner_name=planner.name,
     )
     built.provenance["interventions"] = len(escalator.interventions)
+    if fallback and fallback.attempts:
+        built.provenance["vision_fallback"] = fallback.provenance()
     log.event("artifact_built", capability=built.name, version=built.version, steps=len(built.steps),
               outputs=list(built.outputs), outcomes=[o["code"] for o in built.outcomes])
     return built
@@ -386,3 +408,168 @@ def confirm_with_human(action: Action, observation: Observation, name: str, goal
     if result.disposition == "approve":
         return Verdict("allow", "approved by human operator")
     return Verdict("deny", f"human operator did not approve ({result.disposition})")
+
+
+# ---------- the vision fallback ----------
+
+class Vision:
+    """Bounded screenshot fallback for discovery: one visual proposal when the planner is stuck.
+
+    Budget: at most `max_attempts` attempts per run, and never twice for the same screen (a
+    fingerprint of the structured observation plus the masked screenshot bytes; the bytes are
+    hashed, never stored). A proposal is turned into an ordinary click or type Action whose
+    target carries `source="vision"` and no structural reference, so it goes through the normal
+    policy check and is acted on by coordinates.
+    """
+
+    def __init__(self, planner: VisionPlanner, max_attempts: int, goal: str, visible_params: dict, params: dict,
+                 surface: Surface, log: RunLog):
+        self.planner, self.max_attempts = planner, max_attempts
+        self.goal, self.visible_params, self.params, self.surface, self.log = goal, visible_params, params, surface, log
+        self.attempts = 0
+        self.last_fingerprint: str | None = None
+        self.exhausted_logged = False
+        self.recorded_steps: list[str] = []
+        self.frame: ScreenshotFrame | None = None
+
+    def propose(self, stuck: Action, observation: Observation, history: list[Action]) -> Action | None:
+        if stuck.stuck_cause != "perception":
+            # Provider failures and ordinary uncertainty are not perception gaps: straight to a person.
+            self.log.event("vision_fallback_skipped", reason=f"stuck cause is {stuck.stuck_cause or 'unknown'!r}, "
+                                                             f"not a missing control")
+            return None
+        capture = getattr(self.surface, "viewport_screenshot", None)
+        decide = getattr(self.planner, "decide_visually", None)
+        if capture is None or decide is None:
+            self.log.event("vision_fallback_unavailable", reason="surface or planner cannot provide vision")
+            return None
+        if self.attempts >= self.max_attempts:
+            if not self.exhausted_logged:
+                self.log.event("vision_budget_exhausted", attempts=self.attempts, max_attempts=self.max_attempts)
+                self.exhausted_logged = True
+            return None
+        self.log.shots_dir.mkdir(parents=True, exist_ok=True)
+        path = self.log.shots_dir / f"{self.log.seq:03d}-vision-attempt-{self.attempts + 1}.png"
+        try:
+            frame = capture(str(path))
+        except Exception as error:   # an unusable capture (scale mismatch, browser gone) is not a proposal
+            self.log.event("vision_fallback_unavailable", reason=f"{type(error).__name__}: {str(error)[:200]}")
+            return None
+        fingerprint = screen_fingerprint(observation, frame.png)
+        if fingerprint == self.last_fingerprint:
+            self.log.event("vision_fallback_skipped", reason="screen unchanged since the last visual attempt",
+                           fingerprint=fingerprint)
+            return None
+        self.attempts += 1
+        self.last_fingerprint = fingerprint
+        self.frame = frame
+        remaining = self.max_attempts - self.attempts
+        self.log.event("vision_fallback_requested", attempt=self.attempts, reason=stuck.reason, fingerprint=fingerprint,
+                       screenshot=str(path), width=frame.width, height=frame.height, scroll=[frame.scroll_x,
+                       frame.scroll_y], remaining=remaining)
+        decision = decide(self.goal, self.visible_params, observation, history, frame, remaining)
+        target = decision.target
+        self.log.event("vision_fallback_decided", attempt=self.attempts, kind=decision.kind,
+                       target=describe_visual(target), confidence=target.confidence if target else None,
+                       expect=target.expect if target else None, reason=decision.reason[:200])
+        if decision.kind == "unavailable":
+            self.log.event("vision_fallback_unavailable", reason=decision.reason[:200])
+            return None
+        if decision.rejected:
+            self.log.event("vision_target_rejected", attempt=self.attempts, reason=decision.rejected)
+            return None
+        if decision.kind == "no_target" or target is None:
+            return None
+        rejection = self.unsafe_to_act(decision.value, target.expect, observation)
+        if rejection:
+            self.log.event("vision_target_rejected", attempt=self.attempts, reason=rejection)
+            return None
+        element = Element(role=target.role, name=target.name, text="", box=(target.x, target.y, target.width,
+                                                                              target.height), source="vision")
+        kind = "type" if decision.kind == "visual_type" else "click"
+        return Action(kind=kind, target=element, value=decision.value, expect=target.expect,
+                      reason=f"vision fallback: {target.reason}")
+
+    def unsafe_to_act(self, value: str | None, expect: str, observation: Observation) -> str | None:
+        """Why an accepted-looking proposal must still not run: an undeclared placeholder in what would be typed or
+        checked, or an expected text that is already on screen (the action could then never be verified)."""
+        unknown = (placeholders_in(value) | placeholders_in(expect)) - set(self.params)
+        if unknown:
+            return f"undeclared placeholders {sorted(unknown)} in the proposed value or expected text"
+        expected = substitute(expect, self.params)
+        if expected in visible_text(observation):
+            return f"expected text {expected!r} is already on screen before acting; the action could not be verified"
+        return None
+
+    def provenance(self) -> dict:
+        return {"attempts": self.attempts, "max_attempts": self.max_attempts, "planner": self.planner.name,
+                "steps": list(self.recorded_steps)}
+
+
+def screen_fingerprint(observation: Observation, png: bytes) -> str:
+    """A hash of what is on screen: structured controls plus the masked image bytes. Nothing sensitive is kept."""
+    digest = hashlib.sha256()
+    digest.update(observation.url.encode())
+    for element in observation.elements:
+        digest.update(f"{element.role}|{element.name}|{element.text}|{element.states}".encode())
+    digest.update(png)
+    return digest.hexdigest()[:16]
+
+
+def describe_visual(target) -> dict | None:
+    if target is None:
+        return None
+    return {"role": target.role, "name": target.name[:80], "box": [target.x, target.y, target.width, target.height]}
+
+
+def verify_vision_action(action: Action, before: Observation, params: dict, policy: Policy, recorder: Recorder,
+                         surface: Surface, log: RunLog, fallback: "Vision", name: str, goal: str,
+                         escalator: Escalator) -> None:
+    """A visual action is kept only when structured perception proves its expected text appeared.
+
+    Otherwise it is neither repeated nor recorded: a person is asked, with the screenshot in the log.
+    """
+    expected = substitute(action.expect, params)
+    verified = wait_for_text(surface, expected)
+    log.event("vision_action_verified", verified=verified, kind=action.kind, target=describe_visual_element(action),
+              expect=action.expect)
+    if not verified:
+        action.result = f"visual {action.kind} did not lead to {expected!r}"
+        stuck = Action(kind="stuck", reason=f"visual action could not be verified: expected {expected!r}")
+        handle_stuck(stuck, surface.observe(), name, goal, escalator, surface, log)
+        return
+    action.result = "ok"
+    recorder.record_step(action, risk=policy.risk_of(action), seen=before,
+                         locator=vision_locator(action.target, before, fallback.frame))
+    fallback.recorded_steps.append(recorder.steps[-1].id)
+    log.event("recorded_step", step_id=recorder.steps[-1].id, action=action.kind, checkpoint=action.expect,
+              targeting="vision")
+
+
+def vision_locator(target: Element, seen: Observation, frame: ScreenshotFrame) -> Locator:
+    """The ladder recorded for a visual target: exact coordinates, bound to the viewport and scroll position
+    they were captured at, and a role/name rung only when a structured element with that identity really
+    sits under the box (grounded); a guessed name alone must never let replay click a different control."""
+    x, y, w, h = target.box
+    rungs: list[dict] = []
+    for element in seen.elements:
+        if (element.role, element.name) == (target.role, target.name) and boxes_overlap(element.box, target.box):
+            rungs.append({"kind": "role", "role": element.role, "name": element.name})
+            break
+    rungs.append({"kind": "coords", "x": x + w // 2, "y": y + h // 2, "exact": True,
+                  "viewport": {"width": frame.width, "height": frame.height},
+                  "scroll": {"x": frame.scroll_x, "y": frame.scroll_y}})
+    return Locator(strategies=rungs)
+
+
+def boxes_overlap(a: tuple, b: tuple) -> bool:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return aw > 0 and ah > 0 and ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+
+
+def describe_visual_element(action: Action) -> dict | None:
+    target = action.target
+    if target is None:
+        return None
+    return {"role": target.role, "name": target.name[:80], "box": list(target.box)}

@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 
 from . import artifact as artifact_module
 from . import graph as graph_module
-from .agent import DiscoveryFailed, discover
+from .agent import DEFAULT_MAX_VISION_ATTEMPTS, DiscoveryFailed, discover
 from .approval import ApprovalError, approve
 from .campaign import CampaignError, CampaignFailed, load_spec, run_campaign
 from .escalation import ConsoleOperator, Escalator, NoOperator, SessionControl
@@ -75,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
                       help="extra business outcome identified by on-screen text, e.g. invalid_credentials='do not match'")
     disc.add_argument("--missing-outcome", action="append", default=[], metavar="CODE=TEXT",
                       help="extra business outcome identified by absent text, e.g. product_not_found='{{product_name}}'")
+    add_vision_options(disc)
     add_shared_run_options(disc)
 
     camp = commands.add_parser("discover-campaign",
@@ -87,6 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     camp.add_argument("--model", default=None,
                       help="provider model id (defaults to ANTHROPIC_MODEL or OPENAI_MODEL)")
     camp.add_argument("--max-steps", type=int, default=15)
+    add_vision_options(camp)
     add_shared_run_options(camp, params=False)
 
     rep = commands.add_parser("replay", help="deterministic replay of a saved artifact (no LLM)")
@@ -109,6 +111,14 @@ def build_parser() -> argparse.ArgumentParser:
                       help="stability report; repeat once per selector assignment for a campaign graph")
     appr.add_argument("--reviewer", required=True, help="who reviewed the evidence")
     return parser
+
+
+def add_vision_options(sub: argparse.ArgumentParser) -> None:
+    sub.add_argument("--vision-fallback", action="store_true",
+                     help="opt in to the bounded screenshot fallback when the planner is stuck (discovery only; "
+                          "masked viewport screenshots are sent to the provider and cost money)")
+    sub.add_argument("--max-vision-attempts", type=int, default=DEFAULT_MAX_VISION_ATTEMPTS,
+                     help=f"total visual attempts per discovery run (default: {DEFAULT_MAX_VISION_ATTEMPTS})")
 
 
 def add_shared_run_options(sub: argparse.ArgumentParser, params: bool = True, operator: bool = True) -> None:
@@ -141,10 +151,12 @@ def cmd_discover(args: argparse.Namespace) -> int:
     surface = PlaywrightSurface(headless=not args.headed, secrets=secrets)
     escalator = Escalator(make_operator(args), SessionControl(), log)
     try:
+        planner = make_planner(args)
         built = discover(goal=args.goal, name=args.name, params=params, surface=surface,
-                         planner=make_planner(args), policy=policy, escalator=escalator, log=log,
+                         planner=planner, policy=policy, escalator=escalator, log=log,
                          entry_url=args.url, sensitive=sensitive, max_steps=args.max_steps,
-                         extra_outcomes=extra_outcomes)
+                         extra_outcomes=extra_outcomes, vision=planner if args.vision_fallback else None,
+                         max_vision_attempts=args.max_vision_attempts)
         path = artifact_module.save(built, secrets)
         log.event("artifact_saved", path=str(path))
         evidence_dir = log.copy_to_evidence()
@@ -172,7 +184,8 @@ def cmd_discover_campaign(args: argparse.Namespace) -> int:
         result = run_campaign(
             spec, surface_factory=lambda secrets: PlaywrightSurface(headless=not args.headed, secrets=secrets),
             planner_factory=lambda scenario: make_planner(args), operator=make_operator(args),
-            allowed_hosts=allowed_hosts, max_steps=args.max_steps, echo=not args.quiet, spec_path=args.spec)
+            allowed_hosts=allowed_hosts, max_steps=args.max_steps, echo=not args.quiet, spec_path=args.spec,
+            vision_fallback=args.vision_fallback, max_vision_attempts=args.max_vision_attempts)
     except CampaignFailed as error:
         print(f"\nCampaign failed: {error}\nNo artifact was saved. Summary: {error.summary_path}")
         return 2

@@ -70,6 +70,7 @@ Environment variables (only discovery needs a key; nothing is read from `.env`):
 | `OPENAI_API_KEY` | `discover`, `discover-campaign` with `--provider openai` | none |
 | `ANTHROPIC_API_KEY` | the same commands with `--provider anthropic` | none |
 | `OPENAI_MODEL` / `ANTHROPIC_MODEL` | optional model overrides | `gpt-6-astra` / `claude-opus-5` |
+| `OPENAI_VISION_MODEL` / `ANTHROPIC_VISION_MODEL` | optional model for the `--vision-fallback` screenshot call | the configured model |
 
 Never paste a key into a command line or a file in this repository.
 
@@ -131,12 +132,12 @@ to watch the browser, and take over the same session from the terminal whenever 
 python -m pytest
 ```
 
-296 tests, all offline. The browser and the model are replaced at their protocol boundaries by
-`tests/fake_surface.py` and `tests/scripted_planner.py`. The 33 tests marked `browser` (perception
+330 tests, all offline. The browser and the model are replaced at their protocol boundaries by
+`tests/fake_surface.py` and `tests/scripted_planner.py`. The 37 tests marked `browser` (perception
 rules on a local page, and the MemberOps campaigns driven through the real Chromium adapter by a
 scripted planner, then replayed in every runtime mode) start a local headless Chromium with no
 network and skip when it is absent; they take about nine minutes, so
-`python -m pytest -m "not browser"` (263 tests, under half a minute) is the quick loop.
+`python -m pytest -m "not browser"` (293 tests, under a minute) is the quick loop.
 
 ## MemberOps Sandbox: a controlled back-office target
 
@@ -256,8 +257,36 @@ dialog, and screenshots mask them in page text and in the current values of text
 textareas for the capture only (restored exactly afterwards, with no application event fired).
 Limits:
 this is Chromium-specific and lives entirely inside the adapter; the planner's text rendering
-shows states but not geometry; screenshot vision remains a planned, bounded, discovery-only
-fallback and is not part of this pass.
+shows states but not geometry.
+
+**Vision fallback (opt-in, discovery only).** When structured perception cannot expose a control
+the planner needs (something drawn on a `<canvas>`, an icon with no name, a purely visual widget),
+`--vision-fallback` lets discovery take one bounded extra step: only after the planner reports
+`stuck` with the explicit cause `missing_control` (a provider refusal, malformed output or plain
+uncertainty goes straight to a person), a masked **viewport** screenshot in CSS pixels (page text
+and form values masked, restored afterwards, no events fired; the image size is checked against
+the viewport) goes to the same provider with the structured observation, the redacted parameters
+and the viewport size, and the model may propose exactly one `visual_click` or `visual_type` with
+a bounding box, an expected post-action text and a confidence, or `no_target`. The proposal is
+validated (finite coordinates inside the viewport, confidence at least 0.6, an expected text
+that is not already on screen, only declared placeholders), then goes through the normal policy
+check (allowlist, blocked controls, risk confirmation), is performed once by coordinates, and is
+kept only when structured perception proves the expected text newly appeared; otherwise a person
+is asked and nothing is repeated. Budgets:
+`--max-vision-attempts` per run (default 2), never twice for an unchanged screen, no retry after
+`no_target`. The recorded step is an exact coordinate rung (`exact: true`) bound to the viewport and scroll
+position it was captured at; a role-and-name rung is added only when a structured element with
+that identity really sits under the box, so a guessed name can never send replay to a different
+control. **Replay never calls a model or takes a screenshot for one**: an exact rung resolves to
+the recorded mouse point itself, is refused in another viewport or scroll position, and the
+recorded checkpoint is verified afterwards. Visual extraction is deliberately
+unsupported because replay could not reproduce it. Coordinate steps are weaker than semantic
+ones, so such artifacts stay drafts until stability runs and approval say otherwise. Optional
+`OPENAI_VISION_MODEL` / `ANTHROPIC_VISION_MODEL` pick a different model for the visual call;
+a model without image support makes the fallback unavailable and discovery escalates as before.
+The browser suite proves the whole loop on a local kiosk page whose only button is drawn on a
+canvas. Limits: coordinates depend on layout and viewport; only click and type are possible;
+one attempt per screen means a wrong first guess goes to a human.
 
 ## Safety in one paragraph
 

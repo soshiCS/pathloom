@@ -80,8 +80,37 @@ textareas are replaced for the capture and restored exactly in `finally`; values
 directly, so no input or change event fires, and password fields already render as dots. `states` and `source`
 are runtime-only fields on `Element`; artifacts are unchanged. Limits: Chromium only; option
 nodes inside a closed `<select>` are invisible and therefore not listed; shadow DOM and iframes
-are not walked by either source; screenshot vision is a planned, bounded, discovery-only
-fallback and not part of this pass.
+are not walked by either source.
+
+**Vision fallback (discovery only, opt-in).** `agent.Vision` runs only when the structured
+planner returns `stuck` with `stuck_cause == "perception"`, which the tool contract produces
+solely from an explicit `stuck_cause: missing_control`; refusals, malformed output, bad indexes
+(`provider`) and ordinary uncertainty (`planner`) go straight to a person, as do denials,
+confirmations, effect handling, transient errors, outcomes, bad parameters and completed goals.
+Each attempt: `surface.viewport_screenshot` (masked like `screenshot`, viewport only,
+`scale="css"` so pixels are mouse coordinates, the PNG header checked against the viewport,
+scroll position recorded, saved as the only image file, as evidence), a fingerprint of the structured observation plus the masked bytes (hashed,
+never stored), then `planner.decide_visually(goal, redacted params, observation, history, frame,
+remaining)`. Budget: `max_vision_attempts` per run, at most one attempt per fingerprint, no retry
+after `no_target`, `vision_budget_exhausted` logged once. The provider adapters send the PNG as
+an image block (Anthropic) or `input_image` data URL (OpenAI) with the `choose_visual_action`
+tool; `visual_decision_from_tool_input` refuses unknown kinds, non-finite or out-of-viewport
+boxes, confidence under 0.6, a missing expected text, and a `visual_type` without a value; any
+API failure yields `unavailable`. The agent then refuses a proposal whose value or expected text
+carries an undeclared placeholder, or whose expected text is already on screen (it could never
+prove the click). An accepted proposal becomes an ordinary `Action` whose target is an `Element`
+with `source="vision"`, the box, and no structural ref, so the normal policy check applies and
+the click lands at the box centre. After acting, `verify_vision_action` waits for the expected
+text to newly appear through structured perception; success records the step with
+`vision_locator`: a `coords` rung with `exact: true`, the capture `viewport` and `scroll`, preceded
+by a role/name rung only when a structured element with that identity overlaps the box; failure
+escalates to a person and records nothing. Replay is untouched except in `_resolve_one`: an exact
+rung is honoured only in the recorded viewport and scroll position and then resolves to the
+recorded point itself (never to a containing element); legacy `coords` rungs keep their old
+behaviour. Events:
+`vision_fallback_requested`, `vision_fallback_decided`, `vision_target_rejected`,
+`vision_action_verified`, `vision_budget_exhausted`, `vision_fallback_skipped`,
+`vision_fallback_unavailable`; never image bytes, secrets or raw responses.
 
 ## 3. Graph replay
 

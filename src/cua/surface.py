@@ -12,11 +12,12 @@ surface-agnostic.
 from __future__ import annotations
 
 import re
+import struct
 import time
 from dataclasses import replace
 from typing import Protocol
 
-from .models import Element, Locator, Observation, TransientError
+from .models import Element, Locator, Observation, ScreenshotFrame, TransientError
 
 RENDER_SETTLE_MS = 5000   # longest we wait for client-side rendering to stop changing the page
 RENDER_POLL_MS = 400
@@ -47,7 +48,7 @@ def is_ambiguous(element: Element, observation: Observation) -> bool:
     return len(same) > 1
 
 
-def locator_for(element: Element, ambiguous: bool = False) -> Locator:
+def locator_for(element: Element, ambiguous: bool = False, viewport: tuple[int, int] | None = None) -> Locator:
     """Build the locator ladder recorded for an element, most stable strategy first.
 
     1. role + accessible name (+ the item it belongs to, when the name alone is ambiguous):
@@ -56,6 +57,8 @@ def locator_for(element: Element, ambiguous: bool = False) -> Locator:
        label/value text such as "Total: $ 32.39".
     3. structural path: exact position in the layout; stable for slow-changing legacy apps.
     4. screen coordinates: last resort, works even without any structure (screenshot mode).
+       With `viewport`, the rung records the viewport the coordinates belong to, so replay can
+       refuse to use them in a different one.
     """
     strategies: list[dict] = []
     if element.name:
@@ -72,8 +75,19 @@ def locator_for(element: Element, ambiguous: bool = False) -> Locator:
         strategies.append({"kind": "css", "selector": element.ref})
     x, y, w, h = element.box
     if w and h:
-        strategies.append({"kind": "coords", "x": x + w // 2, "y": y + h // 2})
+        rung = {"kind": "coords", "x": x + w // 2, "y": y + h // 2}
+        if viewport:
+            rung["viewport"] = {"width": viewport[0], "height": viewport[1]}
+        strategies.append(rung)
     return Locator(strategies=strategies)
+
+
+def png_dimensions(png: bytes) -> tuple[int, int]:
+    """Width and height from a PNG's IHDR chunk (the first chunk, right after the signature)."""
+    if len(png) < 24 or png[:8] != b"\x89PNG\r\n\x1a\n" or png[12:16] != b"IHDR":
+        raise ValueError("not a PNG image")
+    width, height = struct.unpack(">II", png[16:24])
+    return width, height
 
 
 def clean_text(value) -> str:
@@ -325,12 +339,14 @@ class PlaywrightSurface:
     deterministic, keyed by the backing element's structural path; see `_merge_accessibility`.
     """
 
-    def __init__(self, headless: bool = True, timeout_ms: int = 15000, secrets: tuple[str, ...] = ()):
+    def __init__(self, headless: bool = True, timeout_ms: int = 15000, secrets: tuple[str, ...] = (),
+                 device_scale_factor: float | None = None):
         from playwright.sync_api import sync_playwright
 
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch(headless=headless)
-        self._page = self._browser.new_context().new_page()
+        context_options = {"device_scale_factor": device_scale_factor} if device_scale_factor else {}
+        self._page = self._browser.new_context(**context_options).new_page()
         self._page.set_default_timeout(timeout_ms)
         self.timeout_ms = timeout_ms
         self.secrets = tuple(s for s in secrets if s)   # values that must never appear in evidence
@@ -496,8 +512,20 @@ class PlaywrightSurface:
                            box=(int(box["x"]), int(box["y"]), int(box["width"]), int(box["height"])),
                            ref=strategy["selector"])
         if kind == "coords":
-            # Screenshot-style fallback: whatever control is drawn at that point on screen.
+            # Screenshot-style fallback: whatever control is drawn at that point on screen. A rung that
+            # names the viewport it was recorded in is only honoured in that viewport: page layouts do
+            # not scale linearly, so guessing would click the wrong thing.
+            recorded = strategy.get("viewport")
+            if recorded and self.viewport_size() != (recorded.get("width"), recorded.get("height")):
+                return None
             x, y = strategy["x"], strategy["y"]
+            if strategy.get("exact"):
+                # A vision coordinate: the recorded mouse point itself, valid only at the recorded scroll
+                # position. It is never widened to whatever element happens to contain the point.
+                scroll = strategy.get("scroll") or {"x": 0, "y": 0}
+                if self.scroll_position() != (scroll.get("x", 0), scroll.get("y", 0)):
+                    return None
+                return Element(role="unknown", name="", box=(x, y, 0, 0), source="coords")
             for element in self.observe().elements:
                 ex, ey, ew, eh = element.box
                 if ex <= x <= ex + ew and ey <= y <= ey + eh and element.role != "text":
@@ -535,6 +563,38 @@ class PlaywrightSurface:
             raise TransientError(f"navigation to {url} timed out", url=url) from error
         if response is not None and response.status >= 500:
             raise TransientError(f"server returned HTTP {response.status}", url=url)
+
+    def viewport_size(self) -> tuple[int, int]:
+        size = self._page.viewport_size or {"width": 0, "height": 0}
+        return int(size["width"]), int(size["height"])
+
+    def scroll_position(self) -> tuple[int, int]:
+        x, y = self._page.evaluate("() => [Math.round(window.scrollX), Math.round(window.scrollY)]")
+        return int(x), int(y)
+
+    def viewport_screenshot(self, path: str) -> ScreenshotFrame:
+        """A masked capture of the viewport only, in CSS pixels, so image coordinates are mouse coordinates.
+
+        `scale="css"` keeps the image at the CSS size even on a high-density display; the PNG header
+        is checked against the viewport so a mismatch is an error rather than a silent offset. Same
+        masking and restoration as `screenshot`; the bytes are returned for the vision planner and
+        the masked image is the only copy written (as evidence at `path`). The scroll position is
+        recorded because the coordinates are only meaningful at that position.
+        """
+        if self.secrets:
+            self._page.evaluate(MASK_JS, list(self.secrets))
+        try:
+            png = self._page.screenshot(path=path, full_page=False, scale="css")
+        finally:
+            if self.secrets:
+                self._page.evaluate(UNMASK_JS)
+        width, height = self.viewport_size()
+        png_width, png_height = png_dimensions(png)
+        if (png_width, png_height) != (width, height):
+            raise ValueError(f"screenshot is {png_width}x{png_height} pixels but the viewport is {width}x{height}: "
+                             f"coordinates would not match the mouse")
+        scroll_x, scroll_y = self.scroll_position()
+        return ScreenshotFrame(png=png, width=width, height=height, path=path, scroll_x=scroll_x, scroll_y=scroll_y)
 
     def screenshot(self, path: str) -> str:
         """Capture the page with any registered secret masked out of the rendered text and form values.

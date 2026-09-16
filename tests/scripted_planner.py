@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from src.cua.artifact import substitute
+from src.cua.models import ScreenshotFrame, VisualDecision, VisualTarget
 
 from .context import Action, Element, Observation
 
@@ -27,6 +28,7 @@ class ScriptedStep:
     expect: str | None = None
     outcomes: list[dict] = field(default_factory=list)
     skip_if_absent: bool = False  # skip silently if the control is not on screen (e.g. a notice)
+    stuck_cause: str = "other"    # for "stuck": "missing_control" is the only cause that may lead to vision
 
 
 def find_element(observation: Observation, step: ScriptedStep, params: dict) -> Element | None:
@@ -55,14 +57,18 @@ class ScriptedPlanner:
             step = self.script[0]
             if step.kind in ("done", "stuck", "navigate"):
                 self.script.pop(0)
+                cause = ""
+                if step.kind == "stuck":
+                    cause = "perception" if step.stuck_cause == "missing_control" else "planner"
                 return Action(kind=step.kind, value=step.value, expect=step.expect, outcomes=step.outcomes,
-                              reason="scripted")
+                              reason="scripted", stuck_cause=cause)
             element = find_element(observation, step, params)
             if element is None and step.skip_if_absent:
                 self.script.pop(0)
                 continue
             if element is None:
-                return Action(kind="stuck", reason=f'scripted step expected {step.role} "{step.name or step.text}"')
+                return Action(kind="stuck", reason=f'scripted step expected {step.role} "{step.name or step.text}"',
+                              stuck_cause="planner")
             self.script.pop(0)
             return Action(kind=step.kind, target=element, value=step.value, output_name=step.output_name,
                           pattern=step.pattern, optional=step.optional, expect=step.expect, reason="scripted")
@@ -97,3 +103,35 @@ def checkout_script() -> list[ScriptedStep]:
             {"code": "checkout_info_missing", "text_contains": "is required"},
         ]),
     ]
+
+
+def visual_click(name: str, expect: str, box=(100, 100, 80, 30), role: str = "button", confidence: float = 0.9,
+                 value: str | None = None) -> VisualDecision:
+    x, y, w, h = box
+    kind = "visual_type" if value is not None else "visual_click"
+    return VisualDecision(kind=kind, value=value, reason="scripted",
+                          target=VisualTarget(role=role, name=name, x=x, y=y, width=w, height=h, expect=expect,
+                                              reason="scripted", confidence=confidence))
+
+
+NO_TARGET = VisualDecision(kind="no_target", reason="scripted: nothing to click")
+
+
+class ScriptedVisionPlanner(ScriptedPlanner):
+    """The structured script plus a fixed list of visual decisions, one per fallback call; records every frame."""
+
+    name = "scripted+vision"
+
+    def __init__(self, script: list[ScriptedStep], decisions: list[VisualDecision]):
+        super().__init__(script)
+        self.decisions = list(decisions)
+        self.frames: list[ScreenshotFrame] = []
+        self.calls: list[dict] = []
+
+    def decide_visually(self, goal, params, observation, history, frame, remaining_attempts) -> VisualDecision:
+        self.frames.append(frame)
+        self.calls.append({"params": dict(params), "remaining": remaining_attempts, "width": frame.width,
+                           "height": frame.height, "elements": len(observation.elements)})
+        if not self.decisions:
+            return NO_TARGET
+        return self.decisions.pop(0)

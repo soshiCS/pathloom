@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import artifact as artifact_module
-from .agent import DEFAULT_MAX_STEPS, DiscoveryFailed, discover
+from .agent import DEFAULT_MAX_STEPS, DEFAULT_MAX_VISION_ATTEMPTS, DiscoveryFailed, discover
 from .artifact import ArtifactError, validate_outcome
 from .escalation import Escalator, Operator, SessionControl
 from .evidence import RunLog
@@ -219,6 +219,8 @@ def run_campaign(
     max_steps: int = DEFAULT_MAX_STEPS,
     echo: bool = False,
     spec_path: str = "",
+    vision_fallback: bool = False,
+    max_vision_attempts: int = DEFAULT_MAX_VISION_ATTEMPTS,
 ) -> CampaignResult:
     """Discover every scenario in order, each on a fresh session, then merge and save one draft graph.
 
@@ -240,7 +242,7 @@ def run_campaign(
         log.event("scenario_started", scenario=scenario.name, selectors=record["selectors"], params=record["params"])
         try:
             traces.append(discover_scenario(spec, scenario, record, surface_factory, planner_factory, operator,
-                                            allowed_hosts, max_steps, echo))
+                                            allowed_hosts, max_steps, echo, vision_fallback, max_vision_attempts))
         except Exception as error:   # DiscoveryFailed, or anything the provider, planner, or browser threw
             # Error text may quote a typed value: redact before it reaches the summary or the exception.
             why = redact(str(error), secrets)
@@ -273,7 +275,9 @@ def run_campaign(
 
 
 def discover_scenario(spec: CampaignSpec, scenario: Scenario, record: dict, surface_factory, planner_factory,
-                      operator: Operator, allowed_hosts: list[str], max_steps: int, echo: bool) -> ScenarioTrace:
+                      operator: Operator, allowed_hosts: list[str], max_steps: int, echo: bool,
+                      vision_fallback: bool = False,
+                      max_vision_attempts: int = DEFAULT_MAX_VISION_ATTEMPTS) -> ScenarioTrace:
     """One ordinary discovery run: its own log, session, planner, policy and escalation.
 
     Any failure (a stopped discovery, a provider error, a browser that would not start) leaves
@@ -291,7 +295,8 @@ def discover_scenario(spec: CampaignSpec, scenario: Scenario, record: dict, surf
                          planner=planner, policy=Policy(allowed_hosts=list(allowed_hosts)),
                          escalator=Escalator(operator, SessionControl(), run_log), log=run_log, entry_url=spec.url,
                          sensitive=set(scenario.sensitive), max_steps=max_steps, output_contract=spec.outputs,
-                         selectors=set(spec.selectors), extra_outcomes=[dict(o) for o in spec.outcomes])
+                         selectors=set(spec.selectors), extra_outcomes=[dict(o) for o in spec.outcomes],
+                         vision=planner if vision_fallback else None, max_vision_attempts=max_vision_attempts)
         if spec.outcomes:
             # discover() appends the reviewer's outcomes as given; reconcile with what the planner declared.
             recorded = [o for o in built.outcomes if not (o.get("source") == "reviewer" and o in spec.outcomes)]

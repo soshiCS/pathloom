@@ -7,7 +7,14 @@ are plain lists of Elements; actions move between screens following the shop's r
 """
 from __future__ import annotations
 
+from src.cua.models import ScreenshotFrame
+
 from .context import Element, Locator, Observation, TransientError
+
+# A valid 1x1 PNG; the fake has no pixels worth looking at, only bytes to hash and hand over.
+TINY_PNG = bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478"
+                         "9c63f8ffff3f0005fe02fe0d8b0a9c0000000049454e44ae426082")
+VIEWPORT = (800, 600)
 
 ENTRY = "https://www.saucedemo.com/"
 USERS = {"standard_user": "secret_sauce", "locked_out_user": "secret_sauce"}
@@ -39,6 +46,7 @@ class FakeSurface:
         self.error = ""
         self.actions: list[tuple] = []           # every call, for assertions
         self.screenshots = 0
+        self.viewport_shots: list[str] = []      # every viewport capture handed to a vision planner
 
     # ---------- screens ----------
 
@@ -178,3 +186,10 @@ class FakeSurface:
     def screenshot(self, path: str) -> str:
         self.screenshots += 1
         return path
+
+    def viewport_screenshot(self, path: str) -> ScreenshotFrame:
+        """A frame whose bytes depend on the screen, so a fingerprint changes when the screen does."""
+        self.screenshots += 1
+        self.viewport_shots.append(path)
+        stamp = f"{self.screen}|{self.dialog}|{self.error}|{sorted(self.typed.items())}".encode()
+        return ScreenshotFrame(png=TINY_PNG + stamp, width=VIEWPORT[0], height=VIEWPORT[1], path=path)
