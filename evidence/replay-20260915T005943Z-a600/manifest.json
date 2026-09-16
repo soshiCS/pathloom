@@ -1,0 +1,26 @@
+{
+  "manifest_schema_version": "1.0",
+  "run_id": "replay-20260915T005943Z-a600",
+  "artifact_path": "artifacts/checkout_paths.v2.json",
+  "artifact_file": "checkout_paths.v2.json",
+  "sha256": "3550f303d842364a1cb238558a3ad283551400354564034ea4084f315143a44d",
+  "capability": "checkout_paths",
+  "capability_version": 2,
+  "schema_version": "2.0",
+  "status": "draft",
+  "result_status": "success",
+  "outcome_code": null,
+  "param_names": [
+    "cart_route",
+    "first_name",
+    "last_name",
+    "password",
+    "postal_code",
+    "product_name",
+    "product_route",
+    "username"
+  ],
+  "sensitive_params": [
+    "password"
+  ]
+}

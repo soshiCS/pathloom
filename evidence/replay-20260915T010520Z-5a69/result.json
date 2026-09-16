@@ -1,0 +1,20 @@
+{
+  "status": "failure",
+  "outputs": {},
+  "outcome_code": "no_matching_edge",
+  "step_id": "d1",
+  "expected": "one of: -> s1 when input_equals 'product_route' and input_equals 'cart_route'; -> s1 when input_equals 'product_route' and input_equals 'cart_route'; -> s1 when input_equals 'product_route' and input_equals 'cart_route'",
+  "observed": "",
+  "recoveries": [],
+  "interventions": [
+    {
+      "step_id": "d1",
+      "kind": "stuck",
+      "reason": "no_matching_edge: expected one of: -> s1 when input_equals 'product_route' and input_equals 'cart_route'; -> s1 when input_equals 'product_route' and input_equals 'cart_route'; -> s1 when input_equals 'product_route' and input_equals 'cart_route'",
+      "resolved": false,
+      "disposition": "abort",
+      "human_actions": [],
+      "note": "no operator available"
+    }
+  ]
+}

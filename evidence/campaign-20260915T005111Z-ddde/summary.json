@@ -1,0 +1,144 @@
+{
+  "campaign_id": "campaign-20260915T005111Z-ddde",
+  "status": "succeeded",
+  "spec": "scenarios/checkout_paths.json",
+  "capability": "checkout_paths",
+  "selectors": [
+    "product_route",
+    "cart_route"
+  ],
+  "artifact": "artifacts/checkout_paths.v2.json",
+  "scenario_count": 3,
+  "successful_scenario_count": 3,
+  "scenarios": [
+    {
+      "name": "inventory_cart_link",
+      "selectors": {
+        "product_route": "inventory",
+        "cart_route": "cart_link"
+      },
+      "params": [
+        "cart_route",
+        "first_name",
+        "last_name",
+        "password",
+        "postal_code",
+        "product_name",
+        "product_route",
+        "username"
+      ],
+      "sensitive": [
+        "password"
+      ],
+      "status": "succeeded",
+      "run_id": "discovery-20260915T005111Z-0634",
+      "evidence": "evidence/discovery-20260915T005111Z-0634",
+      "trace": "evidence/discovery-20260915T005111Z-0634/inventory_cart_link.trace.json",
+      "node_path": [
+        "d1",
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "d2",
+        "s5",
+        "d3",
+        "s6",
+        "s7",
+        "s8",
+        "s9",
+        "s10",
+        "s11",
+        "s12",
+        "success"
+      ],
+      "error": null
+    },
+    {
+      "name": "details_cart_link",
+      "selectors": {
+        "product_route": "details",
+        "cart_route": "cart_link"
+      },
+      "params": [
+        "cart_route",
+        "first_name",
+        "last_name",
+        "password",
+        "postal_code",
+        "product_name",
+        "product_route",
+        "username"
+      ],
+      "sensitive": [
+        "password"
+      ],
+      "status": "succeeded",
+      "run_id": "discovery-20260915T005155Z-ca52",
+      "evidence": "evidence/discovery-20260915T005155Z-ca52",
+      "trace": "evidence/discovery-20260915T005155Z-ca52/details_cart_link.trace.json",
+      "node_path": [
+        "d1",
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "d2",
+        "s20",
+        "s21",
+        "s22",
+        "s23",
+        "s24",
+        "s25",
+        "s26",
+        "s27",
+        "s28",
+        "success"
+      ],
+      "error": null
+    },
+    {
+      "name": "inventory_cart_url",
+      "selectors": {
+        "product_route": "inventory",
+        "cart_route": "cart_url"
+      },
+      "params": [
+        "cart_route",
+        "first_name",
+        "last_name",
+        "password",
+        "postal_code",
+        "product_name",
+        "product_route",
+        "username"
+      ],
+      "sensitive": [
+        "password"
+      ],
+      "status": "succeeded",
+      "run_id": "discovery-20260915T005245Z-1ce1",
+      "evidence": "evidence/discovery-20260915T005245Z-1ce1",
+      "trace": "evidence/discovery-20260915T005245Z-1ce1/inventory_cart_url.trace.json",
+      "node_path": [
+        "d1",
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "d2",
+        "s5",
+        "d3",
+        "s13",
+        "s14",
+        "s15",
+        "s16",
+        "s17",
+        "s18",
+        "s19",
+        "success"
+      ],
+      "error": null
+    }
+  ]
+}

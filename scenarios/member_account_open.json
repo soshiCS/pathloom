@@ -1,0 +1,86 @@
+{
+  "name": "member_account_open",
+  "goal": "Sign in to MemberOps with the supplied training credentials, use the member ID lookup to find {{member_id}}, open the member's profile, start a new sub-account, choose the Savings account type, enter the supplied opening deposit, continue to the review page, and then click 'Confirm and Open Account'. This capability really opens the sub-account: that click is the intended side effect. On the confirmation page, extract the new account number as account_number and the opening deposit as opening_deposit, then stop.",
+  "url": "http://127.0.0.1:8765/",
+  "selectors": [],
+  "outputs": {
+    "account_number": {
+      "type": "string",
+      "required": true,
+      "pattern": "Account ([A-Z]+-\\d+) \\("
+    },
+    "opening_deposit": {
+      "type": "number",
+      "required": true,
+      "pattern": "opening deposit of \\$\\s*(\\d+\\.\\d{2})"
+    }
+  },
+  "outcomes": [
+    {
+      "code": "invalid_credentials",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "Invalid training credentials"
+      }
+    },
+    {
+      "code": "member_not_found",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "No member found for the supplied lookup value"
+      }
+    },
+    {
+      "code": "member_access_denied",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "This member record is restricted"
+      }
+    },
+    {
+      "code": "invalid_opening_deposit",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "Opening deposit must be a number of at least"
+      }
+    },
+    {
+      "code": "dismiss_maintenance_notice",
+      "kind": "recoverable",
+      "source": "reviewer",
+      "detect": {
+        "dialog_contains": "Scheduled maintenance"
+      },
+      "recover": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Dismiss"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "member_id_savings_open",
+      "params": {
+        "username": "operator",
+        "password": "training_only",
+        "member_id": "1001",
+        "opening_deposit": "500"
+      },
+      "sensitive": [
+        "password"
+      ]
+    }
+  ]
+}

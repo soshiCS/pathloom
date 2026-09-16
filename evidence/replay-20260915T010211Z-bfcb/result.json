@@ -1,0 +1,12 @@
+{
+  "status": "success",
+  "outputs": {
+    "total": 32.39
+  },
+  "outcome_code": null,
+  "step_id": null,
+  "expected": null,
+  "observed": null,
+  "recoveries": [],
+  "interventions": []
+}

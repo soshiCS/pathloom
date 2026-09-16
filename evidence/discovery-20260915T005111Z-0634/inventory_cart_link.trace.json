@@ -1,0 +1,427 @@
+{
+  "schema_version": "1.0",
+  "name": "checkout_paths",
+  "version": 2,
+  "status": "draft",
+  "description": "Log in to SauceDemo with the supplied credentials. Follow the selected routes exactly. If product_route is 'inventory', add {{product_name}} to the cart directly from the Products page. If product_route is 'details', first open the {{product_name}} product details page and add it to the cart from there. Then, if cart_route is 'cart_link', open the cart by clicking the visible shopping cart control at the top right; if cart_route is 'cart_url', navigate to https://www.saucedemo.com/cart.html. Click Checkout, fill in the first name, last name and postal code, click Continue to reach the Checkout: Overview page, extract only the displayed Total as the output named total, and stop there. Never click Finish.",
+  "surface": {
+    "kind": "web",
+    "app": "Swag Labs",
+    "entry_url": "https://www.saucedemo.com/",
+    "allowed_hosts": [
+      "www.saucedemo.com"
+    ]
+  },
+  "inputs": {
+    "username": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'username' was used during discovery"
+    },
+    "password": {
+      "type": "string",
+      "required": true,
+      "sensitive": true,
+      "description": "Value typed where 'password' was used during discovery"
+    },
+    "product_name": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'product_name' was used during discovery"
+    },
+    "first_name": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'first_name' was used during discovery"
+    },
+    "last_name": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'last_name' was used during discovery"
+    },
+    "postal_code": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'postal_code' was used during discovery"
+    },
+    "product_route": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'product_route' was used during discovery"
+    },
+    "cart_route": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'cart_route' was used during discovery"
+    }
+  },
+  "outputs": {
+    "total": {
+      "type": "number",
+      "required": true,
+      "pattern": "Total: \\$\\s*([\\d.]+)",
+      "description": "Text read from text ''",
+      "example": "32.39"
+    }
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": "navigate",
+      "target": null,
+      "value": "https://www.saucedemo.com/",
+      "checkpoint": {
+        "text_contains": "Accepted usernames are:"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s2",
+      "action": "type",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "textbox",
+            "name": "Username"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > input:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 640,
+            "y": 173
+          }
+        ]
+      },
+      "value": "{{username}}",
+      "checkpoint": {
+        "text_contains": "Login"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s3",
+      "action": "type",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "textbox",
+            "name": "Password"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(2) > input:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 640,
+            "y": 227
+          }
+        ]
+      },
+      "value": "{{password}}",
+      "checkpoint": {
+        "text_contains": "Login"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s4",
+      "action": "click",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "button",
+            "name": "Login"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > input:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 640,
+            "y": 326
+          }
+        ]
+      },
+      "value": null,
+      "checkpoint": {
+        "text_contains": "Products"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s5",
+      "action": "click",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "button",
+            "name": "Add to cart",
+            "context": "{{product_name}}"
+          }
+        ]
+      },
+      "value": null,
+      "checkpoint": {
+        "text_contains": "Remove"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s6",
+      "action": "click",
+      "target": {
+        "strategies": [
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > header:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > a:nth-of-type(1) > span:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 1250,
+            "y": 20
+          }
+        ]
+      },
+      "value": null,
+      "checkpoint": {
+        "text_contains": "Your Cart"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s7",
+      "action": "click",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "button",
+            "name": "Checkout"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > button:nth-of-type(2)"
+          },
+          {
+            "kind": "coords",
+            "x": 1155,
+            "y": 429
+          }
+        ]
+      },
+      "value": null,
+      "checkpoint": {
+        "text_contains": "Checkout: Your Information"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s8",
+      "action": "type",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "textbox",
+            "name": "First Name"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > input:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 640,
+            "y": 274
+          }
+        ]
+      },
+      "value": "{{first_name}}",
+      "checkpoint": {
+        "text_contains": "Checkout: Your Information"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s9",
+      "action": "type",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "textbox",
+            "name": "Last Name"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > input:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 640,
+            "y": 328
+          }
+        ]
+      },
+      "value": "{{last_name}}",
+      "checkpoint": {
+        "text_contains": "Checkout: Your Information"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s10",
+      "action": "type",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "textbox",
+            "name": "Zip/Postal Code"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > input:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 640,
+            "y": 382
+          }
+        ]
+      },
+      "value": "{{postal_code}}",
+      "checkpoint": {
+        "text_contains": "Checkout: Your Information"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s11",
+      "action": "click",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "button",
+            "name": "Continue"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(2) > input:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 1155,
+            "y": 619
+          }
+        ]
+      },
+      "value": null,
+      "checkpoint": {
+        "text_contains": "Checkout: Overview"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s12",
+      "action": "extract",
+      "target": {
+        "strategies": [
+          {
+            "kind": "text",
+            "text": "Total:"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(8)"
+          },
+          {
+            "kind": "coords",
+            "x": 640,
+            "y": 614
+          }
+        ]
+      },
+      "value": "total",
+      "checkpoint": null,
+      "risk": "safe"
+    }
+  ],
+  "outcomes": [
+    {
+      "code": "invalid_credentials",
+      "kind": "business",
+      "source": "planner",
+      "detect": {
+        "text_contains": "Username and password do not match any user in this service"
+      }
+    },
+    {
+      "code": "locked_out",
+      "kind": "business",
+      "source": "planner",
+      "detect": {
+        "text_contains": "Sorry, this user has been locked out."
+      }
+    },
+    {
+      "code": "product_not_listed",
+      "kind": "business",
+      "source": "planner",
+      "detect": {
+        "text_missing": "{{product_name}}"
+      }
+    },
+    {
+      "code": "first_name_required",
+      "kind": "business",
+      "source": "planner",
+      "detect": {
+        "text_contains": "Error: First Name is required"
+      }
+    },
+    {
+      "code": "last_name_required",
+      "kind": "business",
+      "source": "planner",
+      "detect": {
+        "text_contains": "Error: Last Name is required"
+      }
+    },
+    {
+      "code": "postal_code_required",
+      "kind": "business",
+      "source": "planner",
+      "detect": {
+        "text_contains": "Error: Postal Code is required"
+      }
+    }
+  ],
+  "success": {
+    "text_contains": "Checkout: Overview"
+  },
+  "provenance": {
+    "run_id": "discovery-20260915T005111Z-0634",
+    "recorded_at": "2026-09-15T00:51:55+00:00",
+    "planner": "openai:gpt-6-astra",
+    "step_count": 12,
+    "interventions": 0
+  }
+}

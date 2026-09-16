@@ -186,3 +186,24 @@ def test_openai_planner_requests_exactly_one_strict_action():
     tool = client.responses.kwargs["tools"][0]
     assert tool["type"] == "function" and tool["strict"] is True
     assert tool["parameters"]["additionalProperties"] is False
+
+
+def test_selector_values_are_recorded_literally_never_as_placeholders():
+    # A route parameter whose value happens to equal UI text ("Login") must not rewrite the locator
+    # or checkpoint that mentions that text; the path is chosen by the selector guard, not by data.
+    params = {**PARAMS, "mode": "Login"}
+    log = RunLog("discovery", secrets=("secret_sauce",))
+    artifact = discover(goal="g", name="checkout_review", params=params, surface=FakeSurface(),
+                        planner=ScriptedPlanner(checkout_script()), policy=Policy(allowed_hosts=HOSTS),
+                        escalator=Escalator(NoOperator(), SessionControl(), log), log=log, entry_url=ENTRY,
+                        sensitive={"password"}, max_steps=25, selectors={"mode"})
+    assert artifact.steps[3].target.strategies[0]["name"] == "Login" and artifact.steps[2].checkpoint is None
+    assert "mode" in artifact.inputs                              # still a declared input
+    assert "{{mode}}" not in str(artifact)
+
+    log = RunLog("discovery", secrets=("secret_sauce",))
+    artifact = discover(goal="g", name="checkout_review", params=params, surface=FakeSurface(),
+                        planner=ScriptedPlanner(checkout_script()), policy=Policy(allowed_hosts=HOSTS),
+                        escalator=Escalator(NoOperator(), SessionControl(), log), log=log, entry_url=ENTRY,
+                        sensitive={"password"}, max_steps=25)
+    assert artifact.steps[3].target.strategies[0]["name"] == "{{mode}}"     # without the hint: the hazard

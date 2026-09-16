@@ -1,0 +1,29 @@
+{
+  "status": "success",
+  "outputs": {
+    "member_name": "Alex Morgan",
+    "account_type": "Savings",
+    "opening_deposit": 500.0
+  },
+  "outcome_code": null,
+  "step_id": null,
+  "expected": null,
+  "observed": null,
+  "recoveries": [],
+  "interventions": [
+    {
+      "step_id": "s7",
+      "kind": "stuck",
+      "reason": "unknown_dialog: expected no dialog, or a declared recoverable one",
+      "resolved": true,
+      "disposition": "resume",
+      "human_actions": [
+        {
+          "action": "click",
+          "target": "button 'Acknowledge'"
+        }
+      ],
+      "note": "operator chose resume"
+    }
+  ]
+}

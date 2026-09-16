@@ -20,6 +20,7 @@ from typing import Callable
 
 from . import artifact as artifact_module
 from .agent import DEFAULT_MAX_STEPS, DiscoveryFailed, discover
+from .artifact import ArtifactError, validate_outcome
 from .escalation import Escalator, Operator, SessionControl
 from .evidence import RunLog
 from .graph import save_graph
@@ -30,7 +31,11 @@ from .policy import Policy, redact
 from .surface import Surface
 
 SPEC_KEYS = {"name", "goal", "url", "selectors", "scenarios"}
+OPTIONAL_SPEC_KEYS = {"outputs", "outcomes"}
+OUTCOME_SPEC_KEYS = {"code", "kind", "detect", "recover", "source"}
 SCENARIO_KEYS = {"name", "params", "sensitive"}
+OUTPUT_KEYS = {"type", "required", "pattern", "description"}
+OUTPUT_TYPES = {"string", "number", "integer"}
 IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*")
 
 
@@ -64,7 +69,7 @@ def spec_from_dict(data) -> CampaignSpec:
     missing = SPEC_KEYS - set(data)
     if missing:
         raise CampaignError(f"campaign spec is missing keys: {sorted(missing)}")
-    unknown = set(data) - SPEC_KEYS
+    unknown = set(data) - SPEC_KEYS - OPTIONAL_SPEC_KEYS
     if unknown:
         raise CampaignError(f"campaign spec has unknown keys: {sorted(unknown)}")
     if not isinstance(data["name"], str) or not IDENTIFIER.fullmatch(data["name"]):
@@ -91,7 +96,81 @@ def spec_from_dict(data) -> CampaignSpec:
                                 f"{dict(zip(selectors, combination))}; selectors must tell every scenario apart")
         seen[combination] = scenario.name
     return CampaignSpec(name=data["name"], goal=data["goal"], url=data["url"], selectors=list(selectors),
-                        scenarios=scenarios)
+                        scenarios=scenarios, outputs=outputs_from_dict(data.get("outputs", {})),
+                        outcomes=outcomes_from_dict(data.get("outcomes", [])))
+
+
+def outcomes_from_dict(raw) -> list[dict]:
+    """Reviewer-declared outcomes, checked by the artifact's own outcome rules; source is always 'reviewer'."""
+    if not isinstance(raw, list):
+        raise CampaignError("outcomes must be a list of outcome objects")
+    outcomes: list[dict] = []
+    for index, item in enumerate(raw):
+        where = f"outcome {index}"
+        if not isinstance(item, dict):
+            raise CampaignError(f"{where} must be an object")
+        unknown = set(item) - OUTCOME_SPEC_KEYS
+        if unknown:
+            raise CampaignError(f"{where} has unknown keys: {sorted(unknown)}")
+        if item.get("source", "reviewer") != "reviewer":
+            raise CampaignError(f"{where}: source must be 'reviewer' for an outcome declared in the spec")
+        outcome = {**item, "source": "reviewer"}
+        try:
+            validate_outcome(outcome)
+        except ArtifactError as error:
+            raise CampaignError(f"{where}: {error}") from error
+        if any(existing["code"] == outcome["code"] for existing in outcomes):
+            raise CampaignError(f"{where}: outcome code {outcome['code']!r} is declared twice")
+        outcomes.append(outcome)
+    return outcomes
+
+
+def reconcile_outcomes(recorded: list[dict], declared: list[dict], log: RunLog | None = None) -> list[dict]:
+    """Reviewer-declared outcomes are authoritative for their codes.
+
+    A planner outcome whose code the reviewer did not declare is kept unchanged. For a code the
+    reviewer declared, every planner copy is dropped and exactly one reviewer version is kept: an
+    identical definition (apart from source) is deduplicated silently, a different one is logged
+    as `reviewer_outcome_overrode_planner` with both definitions, and never fails the scenario.
+    """
+    definition = lambda outcome: {key: value for key, value in outcome.items() if key != "source"}
+    owned = {outcome["code"] for outcome in declared}
+    merged = [outcome for outcome in recorded if outcome["code"] not in owned]
+    for outcome in declared:
+        for planner_version in (o for o in recorded if o["code"] == outcome["code"]):
+            if definition(planner_version) != definition(outcome) and log is not None:
+                log.event("reviewer_outcome_overrode_planner", code=outcome["code"],
+                          planner=definition(planner_version), reviewer=definition(outcome))
+        merged.append(outcome)
+    return merged
+
+
+def outputs_from_dict(raw) -> dict:
+    """The declared output contract every scenario must record: name -> {type, required, pattern}."""
+    if not isinstance(raw, dict) or not all(isinstance(k, str) and IDENTIFIER.fullmatch(k) for k in raw):
+        raise CampaignError("outputs must be an object keyed by snake_case output names")
+    outputs = {}
+    for name, spec in raw.items():
+        where = f"output {name!r}"
+        if not isinstance(spec, dict):
+            raise CampaignError(f"{where} must be an object")
+        unknown = set(spec) - OUTPUT_KEYS
+        if unknown:
+            raise CampaignError(f"{where} has unknown keys: {sorted(unknown)}")
+        if spec.get("type", "string") not in OUTPUT_TYPES:
+            raise CampaignError(f"{where}: type must be one of {sorted(OUTPUT_TYPES)}")
+        if not isinstance(spec.get("required", True), bool):
+            raise CampaignError(f"{where}: required must be true or false")
+        pattern = spec.get("pattern")
+        if not isinstance(pattern, str) or not pattern:
+            raise CampaignError(f"{where}: a regex pattern is required")
+        try:
+            re.compile(pattern)
+        except re.error as error:
+            raise CampaignError(f"{where}: pattern is not a valid regex: {error}") from error
+        outputs[name] = {"type": spec.get("type", "string"), "required": spec.get("required", True),
+                         "pattern": pattern}
+    return outputs
 
 
 def scenario_from_dict(raw, index: int, selectors: list[str]) -> Scenario:
@@ -149,7 +228,8 @@ def run_campaign(
     secrets = tuple(str(scenario.params[name]) for scenario in spec.scenarios for name in scenario.sensitive)
     log = RunLog("campaign", secrets=secrets, echo=echo)
     log.event("campaign_started", capability=spec.name, goal=spec.goal, entry_url=spec.url, spec=spec_path,
-              selectors=spec.selectors, scenarios=[s.name for s in spec.scenarios], allowed_hosts=allowed_hosts)
+              selectors=spec.selectors, scenarios=[s.name for s in spec.scenarios], allowed_hosts=allowed_hosts,
+              outputs=sorted(spec.outputs))
     records: list[dict] = []
     traces: list[ScenarioTrace] = []
     for scenario in spec.scenarios:
@@ -210,7 +290,16 @@ def discover_scenario(spec: CampaignSpec, scenario: Scenario, record: dict, surf
         built = discover(goal=spec.goal, name=spec.name, params=dict(scenario.params), surface=surface,
                          planner=planner, policy=Policy(allowed_hosts=list(allowed_hosts)),
                          escalator=Escalator(operator, SessionControl(), run_log), log=run_log, entry_url=spec.url,
-                         sensitive=set(scenario.sensitive), max_steps=max_steps)
+                         sensitive=set(scenario.sensitive), max_steps=max_steps, output_contract=spec.outputs,
+                         selectors=set(spec.selectors), extra_outcomes=[dict(o) for o in spec.outcomes])
+        if spec.outcomes:
+            # discover() appends the reviewer's outcomes as given; reconcile with what the planner declared.
+            recorded = [o for o in built.outcomes if not (o.get("source") == "reviewer" and o in spec.outcomes)]
+            built.outcomes = reconcile_outcomes(recorded, spec.outcomes, run_log)
+            artifact_module.validate(built)
+        if spec.outputs and set(built.outputs) != set(spec.outputs):
+            raise DiscoveryFailed(f"recorded outputs {sorted(built.outputs)} do not match the declared contract "
+                                  f"{sorted(spec.outputs)}")
     except Exception as error:
         run_log.event("discovery_failed", error=str(error), kind=type(error).__name__)
         if surface is not None:

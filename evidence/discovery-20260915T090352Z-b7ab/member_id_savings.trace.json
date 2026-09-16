@@ -1,0 +1,461 @@
+{
+  "schema_version": "1.0",
+  "name": "member_account_prepare",
+  "version": 1,
+  "status": "draft",
+  "description": "Sign in to MemberOps with the supplied training credentials. Follow the selected lookup_method exactly: if it is 'member_id', use the member ID lookup and search by {{member_id}}; if it is 'phone', use the phone lookup and search by {{phone}}. Open the member's profile, start a new sub-account, choose exactly the selected account_type ('savings' or 'checking'), enter the supplied opening deposit, and continue to the review page. On the review page, extract the member name as member_name, the account type as account_type, and the opening deposit amount as opening_deposit, then stop. Never click 'Confirm and Open Account'; the account must not be created.",
+  "surface": {
+    "kind": "web",
+    "app": "Sign in - MemberOps Sandbox",
+    "entry_url": "http://127.0.0.1:8765/",
+    "allowed_hosts": [
+      "127.0.0.1"
+    ]
+  },
+  "inputs": {
+    "username": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'username' was used during discovery"
+    },
+    "password": {
+      "type": "string",
+      "required": true,
+      "sensitive": true,
+      "description": "Value typed where 'password' was used during discovery"
+    },
+    "lookup_method": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'lookup_method' was used during discovery"
+    },
+    "member_id": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'member_id' was used during discovery"
+    },
+    "account_type": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'account_type' was used during discovery"
+    },
+    "opening_deposit": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'opening_deposit' was used during discovery"
+    }
+  },
+  "outputs": {
+    "member_name": {
+      "type": "string",
+      "required": true,
+      "pattern": "Member name:\\s*(.+)",
+      "description": "Text read from text ''",
+      "example": "Alex Morgan"
+    },
+    "account_type": {
+      "type": "string",
+      "required": true,
+      "pattern": "Account type:\\s*(\\w+)",
+      "description": "Text read from text ''",
+      "example": "Savings"
+    },
+    "opening_deposit": {
+      "type": "number",
+      "required": true,
+      "pattern": "Opening deposit:\\s*\\$\\s*([\\d.]+)",
+      "description": "Text read from text ''",
+      "example": "{{opening_deposit}}.00"
+    }
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": "navigate",
+      "target": null,
+      "value": "http://127.0.0.1:8765/",
+      "checkpoint": {
+        "text_contains": "Sign in"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s2",
+      "action": "type",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "textbox",
+            "name": "Username"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(1) > td:nth-of-type(2) > input:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 375,
+            "y": 148
+          }
+        ]
+      },
+      "value": "{{username}}",
+      "checkpoint": {
+        "text_contains": "Sign in"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s3",
+      "action": "type",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "textbox",
+            "name": "Password"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(2) > td:nth-of-type(2) > input:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 375,
+            "y": 179
+          }
+        ]
+      },
+      "value": "{{password}}",
+      "checkpoint": {
+        "text_contains": "Sign in"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s4",
+      "action": "click",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "button",
+            "name": "Sign in"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3) > td:nth-of-type(2) > input:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 316,
+            "y": 211
+          }
+        ]
+      },
+      "value": null,
+      "checkpoint": null,
+      "risk": "safe"
+    },
+    {
+      "id": "s5",
+      "action": "type",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "textbox",
+            "name": "Member ID"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > input:nth-of-type(2)"
+          },
+          {
+            "kind": "coords",
+            "x": 339,
+            "y": 160
+          }
+        ]
+      },
+      "value": "{{member_id}}",
+      "checkpoint": {
+        "text_contains": "Member lookup"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s6",
+      "action": "click",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "button",
+            "name": "Search"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > button:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 423,
+            "y": 160
+          }
+        ]
+      },
+      "value": null,
+      "checkpoint": null,
+      "risk": "safe"
+    },
+    {
+      "id": "s7",
+      "action": "click",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "link",
+            "name": "New sub-account"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 1013,
+            "y": 289
+          }
+        ]
+      },
+      "value": null,
+      "checkpoint": null,
+      "risk": "safe"
+    },
+    {
+      "id": "s8",
+      "action": "click",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "link",
+            "name": "Savings"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 236,
+            "y": 152
+          }
+        ]
+      },
+      "value": null,
+      "checkpoint": {
+        "text_contains": "Opening deposit"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s9",
+      "action": "type",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "textbox",
+            "name": "Opening deposit (USD)"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(1) > td:nth-of-type(2) > input:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 420,
+            "y": 155
+          }
+        ]
+      },
+      "value": "{{opening_deposit}}",
+      "checkpoint": {
+        "text_contains": "Continue to review"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s10",
+      "action": "click",
+      "target": {
+        "strategies": [
+          {
+            "kind": "role",
+            "role": "button",
+            "name": "Continue to review"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3) > td:nth-of-type(2) > button:nth-of-type(1)"
+          },
+          {
+            "kind": "coords",
+            "x": 440,
+            "y": 218
+          }
+        ]
+      },
+      "value": null,
+      "checkpoint": {
+        "text_contains": "Confirm and Open Account"
+      },
+      "risk": "safe"
+    },
+    {
+      "id": "s11",
+      "action": "extract",
+      "target": {
+        "strategies": [
+          {
+            "kind": "text",
+            "text": "Member name:"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > main:nth-of-type(1) > ul:nth-of-type(1) > li:nth-of-type(2)"
+          },
+          {
+            "kind": "coords",
+            "x": 660,
+            "y": 182
+          }
+        ]
+      },
+      "value": "member_name",
+      "checkpoint": null,
+      "risk": "safe"
+    },
+    {
+      "id": "s12",
+      "action": "extract",
+      "target": {
+        "strategies": [
+          {
+            "kind": "text",
+            "text": "Account type:"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > main:nth-of-type(1) > ul:nth-of-type(1) > li:nth-of-type(3)"
+          },
+          {
+            "kind": "coords",
+            "x": 660,
+            "y": 202
+          }
+        ]
+      },
+      "value": "account_type",
+      "checkpoint": null,
+      "risk": "safe"
+    },
+    {
+      "id": "s13",
+      "action": "extract",
+      "target": {
+        "strategies": [
+          {
+            "kind": "text",
+            "text": "Opening deposit:"
+          },
+          {
+            "kind": "css",
+            "selector": "body:nth-of-type(1) > main:nth-of-type(1) > ul:nth-of-type(1) > li:nth-of-type(4)"
+          },
+          {
+            "kind": "coords",
+            "x": 660,
+            "y": 222
+          }
+        ]
+      },
+      "value": "opening_deposit",
+      "checkpoint": null,
+      "risk": "safe"
+    }
+  ],
+  "outcomes": [
+    {
+      "code": "invalid_credentials",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "Invalid training credentials"
+      }
+    },
+    {
+      "code": "member_not_found",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "No member found for the supplied lookup value"
+      }
+    },
+    {
+      "code": "member_access_denied",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "This member record is restricted"
+      }
+    },
+    {
+      "code": "invalid_opening_deposit",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "Opening deposit must be a number of at least"
+      }
+    },
+    {
+      "code": "dismiss_maintenance_notice",
+      "kind": "recoverable",
+      "source": "reviewer",
+      "detect": {
+        "dialog_contains": "Scheduled maintenance"
+      },
+      "recover": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Dismiss"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "success": {
+    "text_contains": "Review new sub-account"
+  },
+  "provenance": {
+    "run_id": "discovery-20260915T090352Z-b7ab",
+    "recorded_at": "2026-09-15T09:05:07+00:00",
+    "planner": "openai:gpt-6-astra",
+    "step_count": 13,
+    "interventions": 0
+  }
+}

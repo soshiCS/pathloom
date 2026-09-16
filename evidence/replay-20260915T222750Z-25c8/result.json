@@ -1,0 +1,10 @@
+{
+  "status": "failure",
+  "outputs": {},
+  "outcome_code": "irreversible_denied",
+  "step_id": "s11",
+  "expected": "a reversible action",
+  "observed": "effect is irreversible and the irreversible policy is deny",
+  "recoveries": [],
+  "interventions": []
+}

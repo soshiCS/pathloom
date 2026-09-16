@@ -38,9 +38,15 @@ def no_waiting(monkeypatch):
     monkeypatch.setattr(agent_module, "EXPECT_TIMEOUT_S", 0.0)
 
 
-def spec_data(scenarios=None) -> dict:
-    return {"name": "checkout_paths", "goal": "add {{product_name}} to the cart and read the checkout overview",
+TOTAL_CONTRACT = {"total": {"type": "number", "required": True, "pattern": r"Total: \$\s*([\d.]+)"}}
+
+
+def spec_data(scenarios=None, outputs=None) -> dict:
+    data = {"name": "checkout_paths", "goal": "add {{product_name}} to the cart and read the checkout overview",
             "url": ENTRY, "selectors": ["cart_route", "zip_source"], "scenarios": scenarios or SCENARIOS}
+    if outputs is not None:
+        data["outputs"] = outputs
+    return data
 
 
 def campaign_script(cart_route: str, zip_source: str) -> list[ScriptedStep]:
@@ -133,6 +139,49 @@ def test_spec_is_parsed_and_checked():
     rejects(lambda d: d["scenarios"][0].update(sensitive=["nope"]), "sensitive names \\['nope'\\] are not params")
     rejects(lambda d: d["scenarios"][0]["params"].update(postal_code=10001), "every param value must be a string")
     rejects(lambda d: d["scenarios"][0].update(mode="x"), "scenario 'link_postal' has unknown keys")
+
+
+def test_spec_output_contract_is_checked():
+    spec = spec_from_dict(spec_data(outputs=TOTAL_CONTRACT))
+    assert spec.outputs == TOTAL_CONTRACT
+    assert spec_from_dict(spec_data()).outputs == {}
+
+    def rejects(outputs, message):
+        with pytest.raises(CampaignError, match=message):
+            spec_from_dict(spec_data(outputs=outputs))
+
+    rejects([], "outputs must be an object")
+    rejects({"Total": {"pattern": "x"}}, "outputs must be an object keyed by snake_case")
+    rejects({"total": {"pattern": "x", "kind": "money"}}, "output 'total' has unknown keys: \\['kind'\\]")
+    rejects({"total": {"type": "money", "pattern": "x"}}, "type must be one of")
+    rejects({"total": {"required": "yes", "pattern": "x"}}, "required must be true or false")
+    rejects({"total": {"type": "number"}}, "a regex pattern is required")
+    rejects({"total": {"pattern": "("}}, "pattern is not a valid regex")
+
+
+def test_the_declared_output_contract_wins_over_the_planner_and_is_enforced():
+    def loose_pattern(scenario):
+        script = campaign_script(scenario.params["cart_route"], scenario.params["zip_source"])
+        script[-2] = ScriptedStep("extract", "text", text="Total:", output_name="total", pattern=r"([\d.]+)$")
+        return ScriptedPlanner(script)
+
+    result, _ = run(spec_data(outputs=TOTAL_CONTRACT), planner_factory=loose_pattern)
+    assert result.graph.outputs["total"] == {**result.graph.outputs["total"], "type": "number", "required": True,
+                                             "pattern": r"Total: \$\s*([\d.]+)", "example": "32.39"}
+    for record in result.scenarios:
+        trace = json.loads(open(record["trace"]).read())
+        assert trace["outputs"]["total"]["pattern"] == r"Total: \$\s*([\d.]+)"
+    assert replay(result.graph, dict(SCENARIOS[0]["params"]))[0].outputs == {"total": 32.39}
+
+    def other_output(scenario):
+        script = campaign_script(scenario.params["cart_route"], scenario.params["zip_source"])
+        if scenario.name == "url_phone":
+            script[-2] = ScriptedStep("extract", "text", text="Tax:", output_name="tax", pattern=MONEY)
+        return ScriptedPlanner(script)
+
+    with pytest.raises(CampaignFailed, match="scenario 'url_phone' failed: recorded outputs \\['tax'\\] do not "
+                                             "match the declared contract \\['total'\\]"):
+        run(spec_data(outputs=TOTAL_CONTRACT), planner_factory=other_output)
 
 
 def test_spec_file_errors_are_reported(tmp_path):
@@ -404,3 +453,68 @@ def test_cli_runs_a_campaign_from_a_spec_file(monkeypatch, tmp_path, capsys):
     spec_path.write_text(json.dumps({**spec_data(), "selectors": ["nope"]}))
     assert main(["discover-campaign", "--spec", str(spec_path), "--operator", "none", "--quiet"]) == 2
     assert "Cannot load campaign spec" in capsys.readouterr().out
+
+
+# ---------- reviewer-declared outcomes (generic contract, proven on the fake shop) ----------
+
+LOCKED = {"code": "user_locked_out", "kind": "business", "detect": {"text_contains": "locked out"}}
+NOTICE = {"code": "dismiss_cookie_notice", "kind": "recoverable", "detect": {"dialog_contains": "We use cookies"},
+          "recover": {"action": "click",
+                      "target": {"strategies": [{"kind": "role", "role": "button", "name": "Accept"}]}}}
+
+
+def test_declared_outcomes_reach_every_trace_the_graph_and_replay_classification():
+    def quiet_planner(scenario):                       # a planner that declares nothing itself
+        script = campaign_script(scenario.params["cart_route"], scenario.params["zip_source"])
+        script[-1] = ScriptedStep("done", expect="Checkout: Overview")
+        return ScriptedPlanner(script)
+
+    result, _ = run(spec_data(outputs=TOTAL_CONTRACT) | {"outcomes": [LOCKED, NOTICE]}, planner_factory=quiet_planner)
+    graph = result.graph
+    assert [(o["code"], o["source"]) for o in graph.outcomes] == [("user_locked_out", "reviewer"),
+                                                                  ("dismiss_cookie_notice", "reviewer")]
+    for record in result.scenarios:
+        trace = json.loads(open(record["trace"]).read())
+        assert [o["code"] for o in trace["outcomes"]] == ["user_locked_out", "dismiss_cookie_notice"]
+
+    locked, surface = replay(graph, {**SCENARIOS[0]["params"], "username": "locked_out_user"})
+    assert locked.status == "business_outcome" and locked.outcome_code == "user_locked_out"
+    surface = FakeSurface(show_notice=True)
+    log = RunLog("replay", secrets=("secret_sauce", PHONE))
+    recovered = replay_graph(graph, dict(SCENARIOS[0]["params"]), surface, Policy(allowed_hosts=HOSTS),
+                             Escalator(NoOperator(), SessionControl(), log), log)
+    assert recovered.status == "success" and recovered.recoveries == ["s1: dismiss_cookie_notice"]
+
+
+def test_planner_agreeing_with_the_reviewer_is_deduplicated_silently():
+    result, _ = run(spec_data(outputs=TOTAL_CONTRACT) | {"outcomes": [LOCKED]})     # the script declares it too
+    assert [o for o in result.graph.outcomes if o["code"] == "user_locked_out"] == [{**LOCKED, "source": "reviewer"}]
+    for record in result.scenarios:
+        log = (evidence_module.EVIDENCE_DIR / record["run_id"] / "run.jsonl").read_text()
+        assert "reviewer_outcome_overrode_planner" not in log
+
+
+def test_reviewer_definition_overrides_the_planners_with_a_logged_warning():
+    # The script declares invalid_credentials as "do not match"; the reviewer declares the fuller site text.
+    reviewer = {"code": "invalid_credentials", "kind": "business",
+                "detect": {"text_contains": "Username and password do not match any user"}}
+
+    def guessing_planner(scenario):            # the planner declares the same code from a shorter guess
+        script = campaign_script(scenario.params["cart_route"], scenario.params["zip_source"])
+        script[-1] = ScriptedStep("done", expect="Checkout: Overview", outcomes=[
+            {"code": "user_locked_out", "text_contains": "locked out"},
+            {"code": "invalid_credentials", "text_contains": "do not match"}])
+        return ScriptedPlanner(script)
+
+    result, _ = run(spec_data(outputs=TOTAL_CONTRACT) | {"outcomes": [reviewer]}, planner_factory=guessing_planner)
+    graph = result.graph
+    assert [o for o in graph.outcomes if o["code"] == "invalid_credentials"] == [{**reviewer, "source": "reviewer"}]
+    assert "user_locked_out" in {o["code"] for o in graph.outcomes}          # planner-only outcomes stay
+    for record in result.scenarios:
+        log = (evidence_module.EVIDENCE_DIR / record["run_id"] / "run.jsonl").read_text()
+        [event] = [json.loads(l) for l in log.splitlines() if "reviewer_outcome_overrode_planner" in l]
+        assert event["code"] == "invalid_credentials"
+        assert event["planner"]["detect"] == {"text_contains": "do not match"}
+        assert event["reviewer"]["detect"] == reviewer["detect"]
+    replayed, _ = replay(graph, {**SCENARIOS[0]["params"], "password": "wrong"})
+    assert (replayed.status, replayed.outcome_code) == ("business_outcome", "invalid_credentials")

@@ -1,0 +1,124 @@
+{
+  "name": "member_account_prepare",
+  "goal": "Sign in to MemberOps with the supplied training credentials. Follow the selected lookup_method exactly: if it is 'member_id', use the member ID lookup and search by {{member_id}}; if it is 'phone', use the phone lookup and search by {{phone}}. Open the member's profile, start a new sub-account, choose exactly the selected account_type ('savings' or 'checking'), enter the supplied opening deposit, and continue to the review page. On the review page, extract the member name as member_name, the account type as account_type, and the opening deposit amount as opening_deposit, then stop. Never click 'Confirm and Open Account'; the account must not be created.",
+  "url": "http://127.0.0.1:8765/",
+  "selectors": [
+    "lookup_method",
+    "account_type"
+  ],
+  "outputs": {
+    "member_name": {
+      "type": "string",
+      "required": true,
+      "pattern": "Member name:\\s*(.+)"
+    },
+    "account_type": {
+      "type": "string",
+      "required": true,
+      "pattern": "Account type:\\s*(\\w+)"
+    },
+    "opening_deposit": {
+      "type": "number",
+      "required": true,
+      "pattern": "Opening deposit:\\s*\\$\\s*([\\d.]+)"
+    }
+  },
+  "outcomes": [
+    {
+      "code": "invalid_credentials",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "Invalid training credentials"
+      }
+    },
+    {
+      "code": "member_not_found",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "No member found for the supplied lookup value"
+      }
+    },
+    {
+      "code": "member_access_denied",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "This member record is restricted"
+      }
+    },
+    {
+      "code": "invalid_opening_deposit",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "Opening deposit must be a number of at least"
+      }
+    },
+    {
+      "code": "dismiss_maintenance_notice",
+      "kind": "recoverable",
+      "source": "reviewer",
+      "detect": {
+        "dialog_contains": "Scheduled maintenance"
+      },
+      "recover": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Dismiss"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "member_id_savings",
+      "params": {
+        "username": "operator",
+        "password": "training_only",
+        "lookup_method": "member_id",
+        "member_id": "1001",
+        "account_type": "savings",
+        "opening_deposit": "500"
+      },
+      "sensitive": [
+        "password"
+      ]
+    },
+    {
+      "name": "phone_savings",
+      "params": {
+        "username": "operator",
+        "password": "training_only",
+        "lookup_method": "phone",
+        "phone": "5550101",
+        "account_type": "savings",
+        "opening_deposit": "500"
+      },
+      "sensitive": [
+        "password"
+      ]
+    },
+    {
+      "name": "member_id_checking",
+      "params": {
+        "username": "operator",
+        "password": "training_only",
+        "lookup_method": "member_id",
+        "member_id": "1001",
+        "account_type": "checking",
+        "opening_deposit": "250"
+      },
+      "sensitive": [
+        "password"
+      ]
+    }
+  ]
+}

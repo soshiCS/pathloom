@@ -1,0 +1,1552 @@
+{
+  "schema_version": "2.0",
+  "name": "checkout_paths",
+  "version": 2,
+  "status": "draft",
+  "description": "Log in to SauceDemo with the supplied credentials. Follow the selected routes exactly. If product_route is 'inventory', add {{product_name}} to the cart directly from the Products page. If product_route is 'details', first open the {{product_name}} product details page and add it to the cart from there. Then, if cart_route is 'cart_link', open the cart by clicking the visible shopping cart control at the top right; if cart_route is 'cart_url', navigate to https://www.saucedemo.com/cart.html. Click Checkout, fill in the first name, last name and postal code, click Continue to reach the Checkout: Overview page, extract only the displayed Total as the output named total, and stop there. Never click Finish.",
+  "surface": {
+    "kind": "web",
+    "app": "Swag Labs",
+    "entry_url": "https://www.saucedemo.com/",
+    "allowed_hosts": [
+      "www.saucedemo.com"
+    ]
+  },
+  "inputs": {
+    "username": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'username' was used during discovery"
+    },
+    "password": {
+      "type": "string",
+      "required": true,
+      "sensitive": true,
+      "description": "Value typed where 'password' was used during discovery"
+    },
+    "product_name": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'product_name' was used during discovery"
+    },
+    "first_name": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'first_name' was used during discovery"
+    },
+    "last_name": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'last_name' was used during discovery"
+    },
+    "postal_code": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'postal_code' was used during discovery"
+    },
+    "product_route": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'product_route' was used during discovery",
+      "selector": true
+    },
+    "cart_route": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'cart_route' was used during discovery",
+      "selector": true
+    }
+  },
+  "outputs": {
+    "total": {
+      "type": "number",
+      "required": true,
+      "pattern": "Total: \\$\\s*([\\d.]+)",
+      "description": "Text read from text ''",
+      "example": "32.39"
+    }
+  },
+  "entry_node": "d1",
+  "nodes": [
+    {
+      "id": "d1",
+      "kind": "decision",
+      "action": null,
+      "effect": "none",
+      "retry_safety": "safe",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s1",
+      "kind": "action",
+      "action": {
+        "action": "navigate",
+        "target": null,
+        "value": "https://www.saucedemo.com/",
+        "checkpoint": {
+          "text_contains": "Accepted usernames are:"
+        }
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s2",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Username"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 173
+            }
+          ]
+        },
+        "value": "{{username}}",
+        "checkpoint": {
+          "text_contains": "Login"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s3",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Password"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(2) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 227
+            }
+          ]
+        },
+        "value": "{{password}}",
+        "checkpoint": {
+          "text_contains": "Login"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s4",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Login"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 326
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Products"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "d2",
+      "kind": "decision",
+      "action": null,
+      "effect": "none",
+      "retry_safety": "safe",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s5",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Add to cart",
+              "context": "{{product_name}}"
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Remove"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "d3",
+      "kind": "decision",
+      "action": null,
+      "effect": "none",
+      "retry_safety": "safe",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s6",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > header:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > a:nth-of-type(1) > span:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 1250,
+              "y": 20
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Your Cart"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s7",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Checkout"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > button:nth-of-type(2)"
+            },
+            {
+              "kind": "coords",
+              "x": 1155,
+              "y": 429
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Checkout: Your Information"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s8",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "First Name"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 274
+            }
+          ]
+        },
+        "value": "{{first_name}}",
+        "checkpoint": {
+          "text_contains": "Checkout: Your Information"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s9",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Last Name"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 328
+            }
+          ]
+        },
+        "value": "{{last_name}}",
+        "checkpoint": {
+          "text_contains": "Checkout: Your Information"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s10",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Zip/Postal Code"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 382
+            }
+          ]
+        },
+        "value": "{{postal_code}}",
+        "checkpoint": {
+          "text_contains": "Checkout: Your Information"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s11",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Continue"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(2) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 1155,
+              "y": 619
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Checkout: Overview"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s12",
+      "kind": "action",
+      "action": {
+        "action": "extract",
+        "target": {
+          "strategies": [
+            {
+              "kind": "text",
+              "text": "Total:"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(8)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 614
+            }
+          ]
+        },
+        "value": "total",
+        "checkpoint": null
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s13",
+      "kind": "action",
+      "action": {
+        "action": "navigate",
+        "target": null,
+        "value": "https://www.saucedemo.com/cart.html",
+        "checkpoint": {
+          "text_contains": "Your Cart"
+        }
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s14",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Checkout"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > button:nth-of-type(2)"
+            },
+            {
+              "kind": "coords",
+              "x": 1155,
+              "y": 429
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Checkout: Your Information"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s15",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "First Name"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 274
+            }
+          ]
+        },
+        "value": "{{first_name}}",
+        "checkpoint": {
+          "text_contains": "Checkout: Your Information"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s16",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Last Name"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 328
+            }
+          ]
+        },
+        "value": "{{last_name}}",
+        "checkpoint": {
+          "text_contains": "Checkout: Your Information"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s17",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Zip/Postal Code"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 382
+            }
+          ]
+        },
+        "value": "{{postal_code}}",
+        "checkpoint": {
+          "text_contains": "Checkout: Your Information"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s18",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Continue"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(2) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 1155,
+              "y": 619
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Checkout: Overview"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s19",
+      "kind": "action",
+      "action": {
+        "action": "extract",
+        "target": {
+          "strategies": [
+            {
+              "kind": "text",
+              "text": "Total:"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(8)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 614
+            }
+          ]
+        },
+        "value": "total",
+        "checkpoint": null
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s20",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "link",
+              "name": "View details for {{product_name}}",
+              "context": "View details for {{product_name}}"
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Back to products"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s21",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Add to cart"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > button:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 618,
+              "y": 377
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Remove"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s22",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > header:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > a:nth-of-type(1) > span:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 1250,
+              "y": 20
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Your Cart"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s23",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Checkout"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > button:nth-of-type(2)"
+            },
+            {
+              "kind": "coords",
+              "x": 1155,
+              "y": 429
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Checkout: Your Information"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s24",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "First Name"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 274
+            }
+          ]
+        },
+        "value": "{{first_name}}",
+        "checkpoint": {
+          "text_contains": "Checkout: Your Information"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s25",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Last Name"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 328
+            }
+          ]
+        },
+        "value": "{{last_name}}",
+        "checkpoint": {
+          "text_contains": "Checkout: Your Information"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s26",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Zip/Postal Code"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 382
+            }
+          ]
+        },
+        "value": "{{postal_code}}",
+        "checkpoint": {
+          "text_contains": "Checkout: Your Information"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s27",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Continue"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > form:nth-of-type(1) > div:nth-of-type(2) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 1155,
+              "y": 619
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Checkout: Overview"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s28",
+      "kind": "action",
+      "action": {
+        "action": "extract",
+        "target": {
+          "strategies": [
+            {
+              "kind": "text",
+              "text": "Total:"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(8)"
+            },
+            {
+              "kind": "coords",
+              "x": 640,
+              "y": 614
+            }
+          ]
+        },
+        "value": "total",
+        "checkpoint": null
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "success",
+      "kind": "terminal",
+      "action": null,
+      "effect": "none",
+      "retry_safety": "safe",
+      "status": "success",
+      "outcome_code": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "d1",
+      "target": "s1",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "product_route",
+          "value": "inventory"
+        },
+        {
+          "kind": "input_equals",
+          "input": "cart_route",
+          "value": "cart_link"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "d1",
+      "target": "s1",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "product_route",
+          "value": "details"
+        },
+        {
+          "kind": "input_equals",
+          "input": "cart_route",
+          "value": "cart_link"
+        }
+      ],
+      "priority": 1
+    },
+    {
+      "source": "d1",
+      "target": "s1",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "product_route",
+          "value": "inventory"
+        },
+        {
+          "kind": "input_equals",
+          "input": "cart_route",
+          "value": "cart_url"
+        }
+      ],
+      "priority": 2
+    },
+    {
+      "source": "s1",
+      "target": "s2",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s2",
+      "target": "s3",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s3",
+      "target": "s4",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s4",
+      "target": "d2",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "d2",
+      "target": "s5",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "product_route",
+          "value": "inventory"
+        },
+        {
+          "kind": "input_equals",
+          "input": "cart_route",
+          "value": "cart_link"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "d2",
+      "target": "s20",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "product_route",
+          "value": "details"
+        },
+        {
+          "kind": "input_equals",
+          "input": "cart_route",
+          "value": "cart_link"
+        }
+      ],
+      "priority": 1
+    },
+    {
+      "source": "d2",
+      "target": "s5",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "product_route",
+          "value": "inventory"
+        },
+        {
+          "kind": "input_equals",
+          "input": "cart_route",
+          "value": "cart_url"
+        }
+      ],
+      "priority": 2
+    },
+    {
+      "source": "s5",
+      "target": "d3",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "d3",
+      "target": "s6",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "product_route",
+          "value": "inventory"
+        },
+        {
+          "kind": "input_equals",
+          "input": "cart_route",
+          "value": "cart_link"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "d3",
+      "target": "s13",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "product_route",
+          "value": "inventory"
+        },
+        {
+          "kind": "input_equals",
+          "input": "cart_route",
+          "value": "cart_url"
+        }
+      ],
+      "priority": 2
+    },
+    {
+      "source": "s6",
+      "target": "s7",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s7",
+      "target": "s8",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s8",
+      "target": "s9",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s9",
+      "target": "s10",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s10",
+      "target": "s11",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s11",
+      "target": "s12",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s12",
+      "target": "success",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s13",
+      "target": "s14",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s14",
+      "target": "s15",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s15",
+      "target": "s16",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s16",
+      "target": "s17",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s17",
+      "target": "s18",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s18",
+      "target": "s19",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s19",
+      "target": "success",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s20",
+      "target": "s21",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s21",
+      "target": "s22",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s22",
+      "target": "s23",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s23",
+      "target": "s24",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s24",
+      "target": "s25",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s25",
+      "target": "s26",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s26",
+      "target": "s27",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s27",
+      "target": "s28",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s28",
+      "target": "success",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    }
+  ],
+  "outcomes": [
+    {
+      "code": "invalid_credentials",
+      "kind": "business",
+      "source": "planner",
+      "detect": {
+        "text_contains": "Username and password do not match any user in this service"
+      }
+    },
+    {
+      "code": "locked_out",
+      "kind": "business",
+      "source": "planner",
+      "detect": {
+        "text_contains": "Sorry, this user has been locked out."
+      }
+    },
+    {
+      "code": "product_not_listed",
+      "kind": "business",
+      "source": "planner",
+      "detect": {
+        "text_missing": "{{product_name}}"
+      }
+    },
+    {
+      "code": "first_name_required",
+      "kind": "business",
+      "source": "planner",
+      "detect": {
+        "text_contains": "Error: First Name is required"
+      }
+    },
+    {
+      "code": "last_name_required",
+      "kind": "business",
+      "source": "planner",
+      "detect": {
+        "text_contains": "Error: Last Name is required"
+      }
+    },
+    {
+      "code": "postal_code_required",
+      "kind": "business",
+      "source": "planner",
+      "detect": {
+        "text_contains": "Error: Postal Code is required"
+      }
+    }
+  ],
+  "success": {
+    "text_contains": "Checkout: Overview"
+  },
+  "provenance": {
+    "campaign_id": "campaign-20260915T005111Z-ddde",
+    "recorded_at": "2026-09-15T00:53:28+00:00",
+    "merge_strategy": "prefix_tree",
+    "planners": [
+      "openai:gpt-6-astra"
+    ],
+    "selectors": [
+      "product_route",
+      "cart_route"
+    ],
+    "scenario_count": 3,
+    "successful_scenario_count": 3,
+    "node_count": 32,
+    "edge_count": 36,
+    "scenarios": [
+      {
+        "name": "inventory_cart_link",
+        "selectors": {
+          "product_route": "inventory",
+          "cart_route": "cart_link"
+        },
+        "run_id": "discovery-20260915T005111Z-0634",
+        "planner": "openai:gpt-6-astra",
+        "recorded_at": "2026-09-15T00:51:55+00:00",
+        "step_count": 12,
+        "interventions": 0,
+        "node_path": [
+          "d1",
+          "s1",
+          "s2",
+          "s3",
+          "s4",
+          "d2",
+          "s5",
+          "d3",
+          "s6",
+          "s7",
+          "s8",
+          "s9",
+          "s10",
+          "s11",
+          "s12",
+          "success"
+        ],
+        "verified": true
+      },
+      {
+        "name": "details_cart_link",
+        "selectors": {
+          "product_route": "details",
+          "cart_route": "cart_link"
+        },
+        "run_id": "discovery-20260915T005155Z-ca52",
+        "planner": "openai:gpt-6-astra",
+        "recorded_at": "2026-09-15T00:52:45+00:00",
+        "step_count": 13,
+        "interventions": 0,
+        "node_path": [
+          "d1",
+          "s1",
+          "s2",
+          "s3",
+          "s4",
+          "d2",
+          "s20",
+          "s21",
+          "s22",
+          "s23",
+          "s24",
+          "s25",
+          "s26",
+          "s27",
+          "s28",
+          "success"
+        ],
+        "verified": true
+      },
+      {
+        "name": "inventory_cart_url",
+        "selectors": {
+          "product_route": "inventory",
+          "cart_route": "cart_url"
+        },
+        "run_id": "discovery-20260915T005245Z-1ce1",
+        "planner": "openai:gpt-6-astra",
+        "recorded_at": "2026-09-15T00:53:28+00:00",
+        "step_count": 12,
+        "interventions": 0,
+        "node_path": [
+          "d1",
+          "s1",
+          "s2",
+          "s3",
+          "s4",
+          "d2",
+          "s5",
+          "d3",
+          "s13",
+          "s14",
+          "s15",
+          "s16",
+          "s17",
+          "s18",
+          "s19",
+          "success"
+        ],
+        "verified": true
+      }
+    ]
+  }
+}

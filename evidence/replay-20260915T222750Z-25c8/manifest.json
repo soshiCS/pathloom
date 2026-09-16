@@ -1,0 +1,22 @@
+{
+  "manifest_schema_version": "1.0",
+  "run_id": "replay-20260915T222750Z-25c8",
+  "artifact_path": "artifacts/member_account_open.v1.json",
+  "artifact_file": "member_account_open.v1.json",
+  "sha256": "f83dd54c43bd1bdfb70423c6d8789665ecb6bbd25b4cc3dc389beb6ee3dc18c4",
+  "capability": "member_account_open",
+  "capability_version": 1,
+  "schema_version": "2.0",
+  "status": "draft",
+  "result_status": "failure",
+  "outcome_code": "irreversible_denied",
+  "param_names": [
+    "member_id",
+    "opening_deposit",
+    "password",
+    "username"
+  ],
+  "sensitive_params": [
+    "password"
+  ]
+}

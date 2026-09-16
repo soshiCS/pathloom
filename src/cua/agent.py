@@ -35,8 +35,9 @@ class DiscoveryFailed(Exception):
 class Recorder:
     """Accumulates the pieces of the artifact while discovery runs."""
 
-    def __init__(self, params: dict):
+    def __init__(self, params: dict, output_contract: dict | None = None):
         self.params = params
+        self.output_contract = output_contract or {}   # declared outputs: their spec wins over the planner's
         self.steps: list[Step] = []
         self.outputs: dict = {}
         self.outcomes: list[dict] = []
@@ -60,13 +61,19 @@ class Recorder:
                                value=value, checkpoint=checkpoint, risk=risk))
 
     def record_output(self, action: Action, sample: str) -> None:
+        declared = self.output_contract.get(action.output_name, {})
         self.outputs[action.output_name] = {
-            "type": infer_type(sample),
-            "required": not action.optional,   # optional outputs come back as null when absent
-            "pattern": action.pattern,
+            "type": declared.get("type", infer_type(sample)),
+            "required": declared.get("required", not action.optional),   # optional outputs come back as null
+            "pattern": self.output_pattern(action),
             "description": f"Text read from {action.target.role} '{action.target.name}'",
             "example": parameterize(sample, self.params),
         }
+
+    def output_pattern(self, action: Action) -> str | None:
+        """The declared pattern for a contracted output, else what the planner proposed."""
+        declared = self.output_contract.get(action.output_name)
+        return declared["pattern"] if declared else action.pattern
 
     def record_recoverable_dialog(self, dialog_text: str, action: Action) -> None:
         """A dialog the model dismissed may or may not appear next time: record how to clear it."""
@@ -112,12 +119,22 @@ def discover(
     sensitive: set[str] | None = None,
     max_steps: int = DEFAULT_MAX_STEPS,
     extra_outcomes: list[dict] | None = None,
+    output_contract: dict | None = None,
+    selectors: set[str] | None = None,
 ) -> Artifact:
-    """Discover a capability by driving the live surface with the planner; return its artifact."""
+    """Discover a capability by driving the live surface with the planner; return its artifact.
+
+    `output_contract` (name -> {type, required, pattern}) fixes how declared outputs are read,
+    whatever regex the planner proposes, so independent runs record the same contract.
+    `selectors` are inputs that choose a path rather than data the flow uses: their values are
+    recorded literally, never as placeholders, so a route called "details" cannot rewrite the
+    "View details" link a path happens to click.
+    """
     sensitive = sensitive or set()
     # Sensitive values are never shown to the model; it sees (and types) the placeholder.
     visible_params = {key: ("{{" + key + "}}" if key in sensitive else value) for key, value in params.items()}
-    recorder = Recorder(params)
+    recorder = Recorder({key: value for key, value in params.items() if key not in (selectors or set())},
+                        output_contract)
     history: list[Action] = []
     log.event("discovery_started", goal=goal, capability=name, params=visible_params, entry_url=entry_url,
               planner=planner.name, allowed_hosts=policy.allowed_hosts)
@@ -275,9 +292,10 @@ def record_extraction(action: Action, recorder: Recorder, log: RunLog, before: O
     if not action.output_name or action.target is None:
         action.result = "extract needs output_name and a target control"
         return
-    value = apply_pattern(action.target.text or action.target.name, action.pattern)
+    pattern = recorder.output_pattern(action)
+    value = apply_pattern(action.target.text or action.target.name, pattern)
     if not value:
-        action.result = f"pattern {action.pattern!r} matched nothing in {action.target.text!r}"
+        action.result = f"pattern {pattern!r} matched nothing in {action.target.text!r}"
         log.event("extraction_failed", output_name=action.output_name, text=action.target.text)
         return
     action.result = f"ok, extracted {value!r}"
@@ -331,7 +349,7 @@ def finish(action: Action, observation: Observation, params: dict, recorder: Rec
         return False
     recorder.record_business_outcomes(action.outcomes)
     if expected and not depends_on_extracted_values(expected, recorder):
-        recorder.success = {"text_contains": parameterize(expected, params)}
+        recorder.success = {"text_contains": parameterize(expected, recorder.params)}
     else:
         log.event("success_checkpoint_fallback", reason="done text was empty or was an extracted value")
     log.event("goal_reached", outcomes=[o["code"] for o in action.outcomes])

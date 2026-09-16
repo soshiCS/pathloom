@@ -1,0 +1,46 @@
+{
+  "campaign_id": "campaign-20260915T222323Z-cea3",
+  "status": "succeeded",
+  "spec": "scenarios/member_account_open.json",
+  "capability": "member_account_open",
+  "selectors": [],
+  "artifact": "artifacts/member_account_open.v1.json",
+  "scenario_count": 1,
+  "successful_scenario_count": 1,
+  "scenarios": [
+    {
+      "name": "member_id_savings_open",
+      "selectors": {},
+      "params": [
+        "member_id",
+        "opening_deposit",
+        "password",
+        "username"
+      ],
+      "sensitive": [
+        "password"
+      ],
+      "status": "succeeded",
+      "run_id": "discovery-20260915T222323Z-20a7",
+      "evidence": "evidence/discovery-20260915T222323Z-20a7",
+      "trace": "evidence/discovery-20260915T222323Z-20a7/member_id_savings_open.trace.json",
+      "node_path": [
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "s5",
+        "s6",
+        "s7",
+        "s8",
+        "s9",
+        "s10",
+        "s11",
+        "s12",
+        "s13",
+        "success"
+      ],
+      "error": null
+    }
+  ]
+}

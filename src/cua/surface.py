@@ -107,12 +107,18 @@ OBSERVE_JS = r"""
       .filter(n => n.nodeType === 3).map(n => n.textContent).join(' '));
   const box = (el) => { const r = el.getBoundingClientRect();
       return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)]; };
-  // A control's accessible name: explicit label, its text, an image's alt, else where it leads.
+  // A control's accessible name: explicit label, its text, an image's alt, its test id or id
+  // (an icon-only control such as a cart link), else where it leads. A bare number is a badge
+  // (a cart count), not a name.
+  const humanize = (s) => clean((s || '').replace(/[-_]+/g, ' '));
   const controlName = (el) => {
-    const explicit = el.getAttribute('aria-label') || el.getAttribute('title') || el.value || el.textContent;
-    if (clean(explicit)) return explicit;
+    const explicit = clean(el.getAttribute('aria-label') || el.getAttribute('title') || el.value || el.textContent);
+    if (explicit && !/^\d+$/.test(explicit)) return explicit;
     const img = el.querySelector('img[alt]');
     if (img && clean(img.alt)) return img.alt;
+    const testId = humanize(el.getAttribute('data-test') || el.getAttribute('data-testid') || el.id || el.getAttribute('name'));
+    if (testId) return testId;
+    if (explicit) return explicit;
     const href = el.getAttribute('href') || '';
     return href.split('/').pop().replace(/[?#].*$/, '').replace(/\.[a-z]+$/, '');
   };
@@ -154,20 +160,27 @@ OBSERVE_JS = r"""
 
   const push = (el, role, name, text) => out.push({role, name: clean(name), text: clean(text), box: box(el),
                                                    context: contextOf(el), ref: cssPath(el)});
+  const CONTROL = 'a[href], button, [role=button], [role=link]';
   for (const el of document.body.querySelectorAll('*')) {
     if (!isVisible(el)) continue;
     const tag = el.tagName.toLowerCase();
     const type = (el.getAttribute('type') || '').toLowerCase();
+    const aria = (el.getAttribute('role') || '').toLowerCase();
+    // The tag's native role wins (an <a href> is a link whatever ARIA role it also carries, so
+    // perception stays the same between discovery and replay); an ARIA role rescues elements with
+    // no native control role, such as an <a role="button"> without href.
     if (tag === 'a' && el.hasAttribute('href')) push(el, 'link', controlName(el), el.textContent);
     else if (tag === 'button' || (tag === 'input' && (type === 'submit' || type === 'button')))
       push(el, 'button', controlName(el), el.value || el.textContent);
+    else if (aria === 'button' || aria === 'link') push(el, aria, controlName(el), el.textContent);
     else if (tag === 'input' && ['text', 'password', 'search', 'number', 'email', 'tel', ''].includes(type))
       push(el, 'textbox', fieldName(el), type === 'password' ? '' : el.value);   // secrets are never perceived
     else if (tag === 'textarea') push(el, 'textbox', fieldName(el), el.value);
     else if (tag === 'select') push(el, 'combobox', fieldName(el), el.value);
     else if (/^h[1-6]$/.test(tag)) push(el, 'heading', el.textContent, el.textContent);
     else if (tag === 'td' && !el.querySelector('table, input, button, a')) push(el, 'cell', cellName(el), el.textContent);
-    else if (['p', 'li', 'span', 'div', 'label', 'th'].includes(tag) && ownText(el)) push(el, 'text', '', ownText(el));
+    else if (['p', 'li', 'span', 'div', 'label', 'th'].includes(tag) && ownText(el) && !el.closest(CONTROL))
+      push(el, 'text', '', ownText(el));   // text inside a control is the control's, not a separate thing to click
   }
   return {url: location.href, title: document.title, dialog, elements: out};
 }

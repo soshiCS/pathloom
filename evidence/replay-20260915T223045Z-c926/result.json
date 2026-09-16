@@ -1,0 +1,23 @@
+{
+  "status": "success",
+  "outputs": {
+    "account_number": "SAV-9001",
+    "opening_deposit": 500.0
+  },
+  "outcome_code": null,
+  "step_id": null,
+  "expected": null,
+  "observed": null,
+  "recoveries": [],
+  "interventions": [
+    {
+      "step_id": "s11",
+      "kind": "confirm",
+      "reason": "confirmation required: effect is irreversible",
+      "resolved": true,
+      "disposition": "approve",
+      "human_actions": [],
+      "note": "operator chose approve"
+    }
+  ]
+}

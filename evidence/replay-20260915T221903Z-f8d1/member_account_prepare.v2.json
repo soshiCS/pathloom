@@ -1,0 +1,1749 @@
+{
+  "schema_version": "2.0",
+  "name": "member_account_prepare",
+  "version": 2,
+  "status": "approved",
+  "description": "Sign in to MemberOps with the supplied training credentials. Follow the selected lookup_method exactly: if it is 'member_id', use the member ID lookup and search by {{member_id}}; if it is 'phone', use the phone lookup and search by {{phone}}. Open the member's profile, start a new sub-account, choose exactly the selected account_type ('savings' or 'checking'), enter the supplied opening deposit, and continue to the review page. On the review page, extract the member name as member_name, the account type as account_type, and the opening deposit amount as opening_deposit, then stop. Never click 'Confirm and Open Account'; the account must not be created.",
+  "surface": {
+    "kind": "web",
+    "app": "Sign in - MemberOps Sandbox",
+    "entry_url": "http://127.0.0.1:8765/",
+    "allowed_hosts": [
+      "127.0.0.1"
+    ]
+  },
+  "inputs": {
+    "username": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'username' was used during discovery"
+    },
+    "password": {
+      "type": "string",
+      "required": true,
+      "sensitive": true,
+      "description": "Value typed where 'password' was used during discovery"
+    },
+    "lookup_method": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'lookup_method' was used during discovery",
+      "selector": true
+    },
+    "member_id": {
+      "type": "string",
+      "required": false,
+      "sensitive": false,
+      "description": "Value typed where 'member_id' was used during discovery",
+      "required_when": [
+        {
+          "lookup_method": "member_id",
+          "account_type": "savings"
+        },
+        {
+          "lookup_method": "member_id",
+          "account_type": "checking"
+        }
+      ]
+    },
+    "account_type": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'account_type' was used during discovery",
+      "selector": true
+    },
+    "opening_deposit": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Value typed where 'opening_deposit' was used during discovery"
+    },
+    "phone": {
+      "type": "string",
+      "required": false,
+      "sensitive": false,
+      "description": "Value typed where 'phone' was used during discovery",
+      "required_when": [
+        {
+          "lookup_method": "phone",
+          "account_type": "savings"
+        }
+      ]
+    }
+  },
+  "outputs": {
+    "member_name": {
+      "type": "string",
+      "required": true,
+      "pattern": "Member name:\\s*(.+)",
+      "description": "Text read from text ''",
+      "example": "Alex Morgan"
+    },
+    "account_type": {
+      "type": "string",
+      "required": true,
+      "pattern": "Account type:\\s*(\\w+)",
+      "description": "Text read from text ''",
+      "example": "Savings"
+    },
+    "opening_deposit": {
+      "type": "number",
+      "required": true,
+      "pattern": "Opening deposit:\\s*\\$\\s*([\\d.]+)",
+      "description": "Text read from text ''",
+      "example": "{{opening_deposit}}.00"
+    }
+  },
+  "entry_node": "d1",
+  "nodes": [
+    {
+      "id": "d1",
+      "kind": "decision",
+      "action": null,
+      "effect": "none",
+      "retry_safety": "safe",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s1",
+      "kind": "action",
+      "action": {
+        "action": "navigate",
+        "target": null,
+        "value": "http://127.0.0.1:8765/",
+        "checkpoint": {
+          "text_contains": "Sign in"
+        }
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s2",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Username"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(1) > td:nth-of-type(2) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 375,
+              "y": 148
+            }
+          ]
+        },
+        "value": "{{username}}",
+        "checkpoint": {
+          "text_contains": "Sign in"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s3",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Password"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(2) > td:nth-of-type(2) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 375,
+              "y": 179
+            }
+          ]
+        },
+        "value": "{{password}}",
+        "checkpoint": {
+          "text_contains": "Sign in"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s4",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Sign in"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3) > td:nth-of-type(2) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 316,
+              "y": 211
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Member lookup"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "d2",
+      "kind": "decision",
+      "action": null,
+      "effect": "none",
+      "retry_safety": "safe",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s5",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Member ID"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > input:nth-of-type(2)"
+            },
+            {
+              "kind": "coords",
+              "x": 339,
+              "y": 160
+            }
+          ]
+        },
+        "value": "{{member_id}}",
+        "checkpoint": {
+          "text_contains": "Member ID"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s6",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Search"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > button:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 423,
+              "y": 160
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": null
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "d3",
+      "kind": "decision",
+      "action": null,
+      "effect": "none",
+      "retry_safety": "safe",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s7",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "link",
+              "name": "New sub-account"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 1013,
+              "y": 289
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": null
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s8",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "link",
+              "name": "Savings"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 236,
+              "y": 152
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Opening deposit"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s9",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Opening deposit (USD)"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(1) > td:nth-of-type(2) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 420,
+              "y": 155
+            }
+          ]
+        },
+        "value": "{{opening_deposit}}",
+        "checkpoint": {
+          "text_contains": "Continue to review"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s10",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Continue to review"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3) > td:nth-of-type(2) > button:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 440,
+              "y": 218
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Confirm and Open Account"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s11",
+      "kind": "action",
+      "action": {
+        "action": "extract",
+        "target": {
+          "strategies": [
+            {
+              "kind": "text",
+              "text": "Member name:"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > ul:nth-of-type(1) > li:nth-of-type(2)"
+            },
+            {
+              "kind": "coords",
+              "x": 660,
+              "y": 182
+            }
+          ]
+        },
+        "value": "member_name",
+        "checkpoint": null
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s12",
+      "kind": "action",
+      "action": {
+        "action": "extract",
+        "target": {
+          "strategies": [
+            {
+              "kind": "text",
+              "text": "Account type:"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > ul:nth-of-type(1) > li:nth-of-type(3)"
+            },
+            {
+              "kind": "coords",
+              "x": 660,
+              "y": 202
+            }
+          ]
+        },
+        "value": "account_type",
+        "checkpoint": null
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s13",
+      "kind": "action",
+      "action": {
+        "action": "extract",
+        "target": {
+          "strategies": [
+            {
+              "kind": "text",
+              "text": "Opening deposit:"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > ul:nth-of-type(1) > li:nth-of-type(4)"
+            },
+            {
+              "kind": "coords",
+              "x": 660,
+              "y": 222
+            }
+          ]
+        },
+        "value": "opening_deposit",
+        "checkpoint": null
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s14",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "link",
+              "name": "New sub-account"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 1013,
+              "y": 289
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "New sub-account"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s15",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "link",
+              "name": "Checking"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(2)"
+            },
+            {
+              "kind": "coords",
+              "x": 326,
+              "y": 152
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Opening deposit"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s16",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Opening deposit (USD)"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(1) > td:nth-of-type(2) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 420,
+              "y": 155
+            }
+          ]
+        },
+        "value": "{{opening_deposit}}",
+        "checkpoint": {
+          "text_contains": "Continue to review"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s17",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Continue to review"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3) > td:nth-of-type(2) > button:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 440,
+              "y": 218
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Confirm and Open Account"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s18",
+      "kind": "action",
+      "action": {
+        "action": "extract",
+        "target": {
+          "strategies": [
+            {
+              "kind": "text",
+              "text": "Member name:"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > ul:nth-of-type(1) > li:nth-of-type(2)"
+            },
+            {
+              "kind": "coords",
+              "x": 660,
+              "y": 182
+            }
+          ]
+        },
+        "value": "member_name",
+        "checkpoint": null
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s19",
+      "kind": "action",
+      "action": {
+        "action": "extract",
+        "target": {
+          "strategies": [
+            {
+              "kind": "text",
+              "text": "Account type:"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > ul:nth-of-type(1) > li:nth-of-type(3)"
+            },
+            {
+              "kind": "coords",
+              "x": 660,
+              "y": 202
+            }
+          ]
+        },
+        "value": "account_type",
+        "checkpoint": null
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s20",
+      "kind": "action",
+      "action": {
+        "action": "extract",
+        "target": {
+          "strategies": [
+            {
+              "kind": "text",
+              "text": "Opening deposit:"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > ul:nth-of-type(1) > li:nth-of-type(4)"
+            },
+            {
+              "kind": "coords",
+              "x": 660,
+              "y": 222
+            }
+          ]
+        },
+        "value": "opening_deposit",
+        "checkpoint": null
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s21",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "link",
+              "name": "By phone"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(2)"
+            },
+            {
+              "kind": "coords",
+              "x": 373,
+              "y": 115
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Phone"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s22",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Phone number"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > input:nth-of-type(2)"
+            },
+            {
+              "kind": "coords",
+              "x": 375,
+              "y": 160
+            }
+          ]
+        },
+        "value": "{{phone}}",
+        "checkpoint": {
+          "text_contains": "Phone number"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s23",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Search"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > button:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 472,
+              "y": 160
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": null
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s24",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "link",
+              "name": "New sub-account"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 1013,
+              "y": 289
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "New sub-account"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s25",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "link",
+              "name": "Savings"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 236,
+              "y": 152
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Opening deposit"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s26",
+      "kind": "action",
+      "action": {
+        "action": "type",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "textbox",
+              "name": "Opening deposit (USD)"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(1) > td:nth-of-type(2) > input:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 420,
+              "y": 155
+            }
+          ]
+        },
+        "value": "{{opening_deposit}}",
+        "checkpoint": {
+          "text_contains": "Continue to review"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s27",
+      "kind": "action",
+      "action": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Continue to review"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3) > td:nth-of-type(2) > button:nth-of-type(1)"
+            },
+            {
+              "kind": "coords",
+              "x": 440,
+              "y": 218
+            }
+          ]
+        },
+        "value": null,
+        "checkpoint": {
+          "text_contains": "Confirm and Open Account"
+        }
+      },
+      "effect": "reversible",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s28",
+      "kind": "action",
+      "action": {
+        "action": "extract",
+        "target": {
+          "strategies": [
+            {
+              "kind": "text",
+              "text": "Member name:"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > ul:nth-of-type(1) > li:nth-of-type(2)"
+            },
+            {
+              "kind": "coords",
+              "x": 660,
+              "y": 182
+            }
+          ]
+        },
+        "value": "member_name",
+        "checkpoint": null
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s29",
+      "kind": "action",
+      "action": {
+        "action": "extract",
+        "target": {
+          "strategies": [
+            {
+              "kind": "text",
+              "text": "Account type:"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > ul:nth-of-type(1) > li:nth-of-type(3)"
+            },
+            {
+              "kind": "coords",
+              "x": 660,
+              "y": 202
+            }
+          ]
+        },
+        "value": "account_type",
+        "checkpoint": null
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "s30",
+      "kind": "action",
+      "action": {
+        "action": "extract",
+        "target": {
+          "strategies": [
+            {
+              "kind": "text",
+              "text": "Opening deposit:"
+            },
+            {
+              "kind": "css",
+              "selector": "body:nth-of-type(1) > main:nth-of-type(1) > ul:nth-of-type(1) > li:nth-of-type(4)"
+            },
+            {
+              "kind": "coords",
+              "x": 660,
+              "y": 222
+            }
+          ]
+        },
+        "value": "opening_deposit",
+        "checkpoint": null
+      },
+      "effect": "none",
+      "retry_safety": "verify_before_retry",
+      "status": null,
+      "outcome_code": null
+    },
+    {
+      "id": "success",
+      "kind": "terminal",
+      "action": null,
+      "effect": "none",
+      "retry_safety": "safe",
+      "status": "success",
+      "outcome_code": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "d1",
+      "target": "s1",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "lookup_method",
+          "value": "member_id"
+        },
+        {
+          "kind": "input_equals",
+          "input": "account_type",
+          "value": "savings"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "d1",
+      "target": "s1",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "lookup_method",
+          "value": "phone"
+        },
+        {
+          "kind": "input_equals",
+          "input": "account_type",
+          "value": "savings"
+        }
+      ],
+      "priority": 1
+    },
+    {
+      "source": "d1",
+      "target": "s1",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "lookup_method",
+          "value": "member_id"
+        },
+        {
+          "kind": "input_equals",
+          "input": "account_type",
+          "value": "checking"
+        }
+      ],
+      "priority": 2
+    },
+    {
+      "source": "s1",
+      "target": "s2",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s2",
+      "target": "s3",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s3",
+      "target": "s4",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s4",
+      "target": "d2",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "d2",
+      "target": "s5",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "lookup_method",
+          "value": "member_id"
+        },
+        {
+          "kind": "input_equals",
+          "input": "account_type",
+          "value": "savings"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "d2",
+      "target": "s21",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "lookup_method",
+          "value": "phone"
+        },
+        {
+          "kind": "input_equals",
+          "input": "account_type",
+          "value": "savings"
+        }
+      ],
+      "priority": 1
+    },
+    {
+      "source": "d2",
+      "target": "s5",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "lookup_method",
+          "value": "member_id"
+        },
+        {
+          "kind": "input_equals",
+          "input": "account_type",
+          "value": "checking"
+        }
+      ],
+      "priority": 2
+    },
+    {
+      "source": "s5",
+      "target": "s6",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s6",
+      "target": "d3",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "d3",
+      "target": "s7",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "lookup_method",
+          "value": "member_id"
+        },
+        {
+          "kind": "input_equals",
+          "input": "account_type",
+          "value": "savings"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "d3",
+      "target": "s14",
+      "guards": [
+        {
+          "kind": "input_equals",
+          "input": "lookup_method",
+          "value": "member_id"
+        },
+        {
+          "kind": "input_equals",
+          "input": "account_type",
+          "value": "checking"
+        }
+      ],
+      "priority": 2
+    },
+    {
+      "source": "s7",
+      "target": "s8",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s8",
+      "target": "s9",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s9",
+      "target": "s10",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s10",
+      "target": "s11",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s11",
+      "target": "s12",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s12",
+      "target": "s13",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s13",
+      "target": "success",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s14",
+      "target": "s15",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s15",
+      "target": "s16",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s16",
+      "target": "s17",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s17",
+      "target": "s18",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s18",
+      "target": "s19",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s19",
+      "target": "s20",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s20",
+      "target": "success",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s21",
+      "target": "s22",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s22",
+      "target": "s23",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s23",
+      "target": "s24",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s24",
+      "target": "s25",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s25",
+      "target": "s26",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s26",
+      "target": "s27",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s27",
+      "target": "s28",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s28",
+      "target": "s29",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s29",
+      "target": "s30",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    },
+    {
+      "source": "s30",
+      "target": "success",
+      "guards": [
+        {
+          "kind": "always"
+        }
+      ],
+      "priority": 0
+    }
+  ],
+  "outcomes": [
+    {
+      "code": "review_not_reached",
+      "kind": "business",
+      "source": "planner",
+      "detect": {
+        "text_missing": "Review new sub-account"
+      }
+    },
+    {
+      "code": "invalid_credentials",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "Invalid training credentials"
+      }
+    },
+    {
+      "code": "member_not_found",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "No member found for the supplied lookup value"
+      }
+    },
+    {
+      "code": "member_access_denied",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "This member record is restricted"
+      }
+    },
+    {
+      "code": "invalid_opening_deposit",
+      "kind": "business",
+      "source": "reviewer",
+      "detect": {
+        "text_contains": "Opening deposit must be a number of at least"
+      }
+    },
+    {
+      "code": "dismiss_maintenance_notice",
+      "kind": "recoverable",
+      "source": "reviewer",
+      "detect": {
+        "dialog_contains": "Scheduled maintenance"
+      },
+      "recover": {
+        "action": "click",
+        "target": {
+          "strategies": [
+            {
+              "kind": "role",
+              "role": "button",
+              "name": "Dismiss"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "success": {
+    "text_contains": "Review new sub-account"
+  },
+  "provenance": {
+    "campaign_id": "campaign-20260915T093738Z-539c",
+    "recorded_at": "2026-09-15T09:40:47+00:00",
+    "merge_strategy": "prefix_tree",
+    "planners": [
+      "openai:gpt-6-astra"
+    ],
+    "selectors": [
+      "lookup_method",
+      "account_type"
+    ],
+    "scenario_count": 3,
+    "successful_scenario_count": 3,
+    "node_count": 34,
+    "edge_count": 38,
+    "scenarios": [
+      {
+        "name": "member_id_savings",
+        "selectors": {
+          "lookup_method": "member_id",
+          "account_type": "savings"
+        },
+        "run_id": "discovery-20260915T093738Z-73a9",
+        "planner": "openai:gpt-6-astra",
+        "recorded_at": "2026-09-15T09:38:50+00:00",
+        "step_count": 13,
+        "interventions": 0,
+        "node_path": [
+          "d1",
+          "s1",
+          "s2",
+          "s3",
+          "s4",
+          "d2",
+          "s5",
+          "s6",
+          "d3",
+          "s7",
+          "s8",
+          "s9",
+          "s10",
+          "s11",
+          "s12",
+          "s13",
+          "success"
+        ],
+        "verified": true
+      },
+      {
+        "name": "phone_savings",
+        "selectors": {
+          "lookup_method": "phone",
+          "account_type": "savings"
+        },
+        "run_id": "discovery-20260915T093850Z-663c",
+        "planner": "openai:gpt-6-astra",
+        "recorded_at": "2026-09-15T09:39:48+00:00",
+        "step_count": 14,
+        "interventions": 0,
+        "node_path": [
+          "d1",
+          "s1",
+          "s2",
+          "s3",
+          "s4",
+          "d2",
+          "s21",
+          "s22",
+          "s23",
+          "s24",
+          "s25",
+          "s26",
+          "s27",
+          "s28",
+          "s29",
+          "s30",
+          "success"
+        ],
+        "verified": true
+      },
+      {
+        "name": "member_id_checking",
+        "selectors": {
+          "lookup_method": "member_id",
+          "account_type": "checking"
+        },
+        "run_id": "discovery-20260915T093948Z-98d3",
+        "planner": "openai:gpt-6-astra",
+        "recorded_at": "2026-09-15T09:40:47+00:00",
+        "step_count": 13,
+        "interventions": 0,
+        "node_path": [
+          "d1",
+          "s1",
+          "s2",
+          "s3",
+          "s4",
+          "d2",
+          "s5",
+          "s6",
+          "d3",
+          "s14",
+          "s15",
+          "s16",
+          "s17",
+          "s18",
+          "s19",
+          "s20",
+          "success"
+        ],
+        "verified": true
+      }
+    ],
+    "approval": {
+      "reviewer": "soroush",
+      "approved_at": "2026-09-15T09:57:04+00:00",
+      "source_version": 1,
+      "source_sha256": "4bee6ab67c4c768b90635dabea9d6039d8cd6f280a86d5bb0e08b97da0ab054a",
+      "source_path": "artifacts/member_account_prepare.v1.json",
+      "reports": [
+        {
+          "path": "evidence/stability-20260915T094738Z-35ac/report.json",
+          "sha256": "18804e693682c67c572f46b45ab9f2515139f81d16d5097c4587fe58b789d84e",
+          "stability_id": "stability-20260915T094738Z-35ac",
+          "runs_completed": 3,
+          "selector_assignment": {
+            "lookup_method": "member_id",
+            "account_type": "savings"
+          }
+        },
+        {
+          "path": "evidence/stability-20260915T094953Z-ce54/report.json",
+          "sha256": "56a4610ea49b6247292ef19d67fa30726291f4cbdb483b6aa681d5ed18439a1f",
+          "stability_id": "stability-20260915T094953Z-ce54",
+          "runs_completed": 3,
+          "selector_assignment": {
+            "lookup_method": "phone",
+            "account_type": "savings"
+          }
+        },
+        {
+          "path": "evidence/stability-20260915T095200Z-d68d/report.json",
+          "sha256": "517a36e0ac703f934e400781f53c8c741959b8c17889e30d0dd17f22a46ee3c5",
+          "stability_id": "stability-20260915T095200Z-d68d",
+          "runs_completed": 3,
+          "selector_assignment": {
+            "lookup_method": "member_id",
+            "account_type": "checking"
+          }
+        }
+      ],
+      "tested_selector_assignments": [
+        {
+          "lookup_method": "member_id",
+          "account_type": "savings"
+        },
+        {
+          "lookup_method": "phone",
+          "account_type": "savings"
+        },
+        {
+          "lookup_method": "member_id",
+          "account_type": "checking"
+        }
+      ]
+    }
+  }
+}

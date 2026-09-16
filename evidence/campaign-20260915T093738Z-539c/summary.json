@@ -1,0 +1,141 @@
+{
+  "campaign_id": "campaign-20260915T093738Z-539c",
+  "status": "succeeded",
+  "spec": "scenarios/member_account_prepare.json",
+  "capability": "member_account_prepare",
+  "selectors": [
+    "lookup_method",
+    "account_type"
+  ],
+  "artifact": "artifacts/member_account_prepare.v1.json",
+  "scenario_count": 3,
+  "successful_scenario_count": 3,
+  "scenarios": [
+    {
+      "name": "member_id_savings",
+      "selectors": {
+        "lookup_method": "member_id",
+        "account_type": "savings"
+      },
+      "params": [
+        "account_type",
+        "lookup_method",
+        "member_id",
+        "opening_deposit",
+        "password",
+        "username"
+      ],
+      "sensitive": [
+        "password"
+      ],
+      "status": "succeeded",
+      "run_id": "discovery-20260915T093738Z-73a9",
+      "evidence": "evidence/discovery-20260915T093738Z-73a9",
+      "trace": "evidence/discovery-20260915T093738Z-73a9/member_id_savings.trace.json",
+      "node_path": [
+        "d1",
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "d2",
+        "s5",
+        "s6",
+        "d3",
+        "s7",
+        "s8",
+        "s9",
+        "s10",
+        "s11",
+        "s12",
+        "s13",
+        "success"
+      ],
+      "error": null
+    },
+    {
+      "name": "phone_savings",
+      "selectors": {
+        "lookup_method": "phone",
+        "account_type": "savings"
+      },
+      "params": [
+        "account_type",
+        "lookup_method",
+        "opening_deposit",
+        "password",
+        "phone",
+        "username"
+      ],
+      "sensitive": [
+        "password"
+      ],
+      "status": "succeeded",
+      "run_id": "discovery-20260915T093850Z-663c",
+      "evidence": "evidence/discovery-20260915T093850Z-663c",
+      "trace": "evidence/discovery-20260915T093850Z-663c/phone_savings.trace.json",
+      "node_path": [
+        "d1",
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "d2",
+        "s21",
+        "s22",
+        "s23",
+        "s24",
+        "s25",
+        "s26",
+        "s27",
+        "s28",
+        "s29",
+        "s30",
+        "success"
+      ],
+      "error": null
+    },
+    {
+      "name": "member_id_checking",
+      "selectors": {
+        "lookup_method": "member_id",
+        "account_type": "checking"
+      },
+      "params": [
+        "account_type",
+        "lookup_method",
+        "member_id",
+        "opening_deposit",
+        "password",
+        "username"
+      ],
+      "sensitive": [
+        "password"
+      ],
+      "status": "succeeded",
+      "run_id": "discovery-20260915T093948Z-98d3",
+      "evidence": "evidence/discovery-20260915T093948Z-98d3",
+      "trace": "evidence/discovery-20260915T093948Z-98d3/member_id_checking.trace.json",
+      "node_path": [
+        "d1",
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "d2",
+        "s5",
+        "s6",
+        "d3",
+        "s14",
+        "s15",
+        "s16",
+        "s17",
+        "s18",
+        "s19",
+        "s20",
+        "success"
+      ],
+      "error": null
+    }
+  ]
+}

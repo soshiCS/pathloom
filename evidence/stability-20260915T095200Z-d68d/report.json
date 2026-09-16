@@ -1,0 +1,88 @@
+{
+  "report_schema_version": "1.0",
+  "stability_id": "stability-20260915T095200Z-d68d",
+  "recorded_at": "2026-09-15T09:53:31+00:00",
+  "artifact": {
+    "name": "member_account_prepare",
+    "version": 1,
+    "schema_version": "2.0",
+    "status": "draft",
+    "path": "artifacts/member_account_prepare.v1.json",
+    "sha256": "4bee6ab67c4c768b90635dabea9d6039d8cd6f280a86d5bb0e08b97da0ab054a"
+  },
+  "irreversible_policy": "deny",
+  "runs_requested": 3,
+  "param_names": [
+    "account_type",
+    "lookup_method",
+    "member_id",
+    "opening_deposit",
+    "password",
+    "username"
+  ],
+  "sensitive_params": [
+    "password"
+  ],
+  "selector_assignment": {
+    "lookup_method": "member_id",
+    "account_type": "checking"
+  },
+  "runs_completed": 3,
+  "status_counts": {
+    "success": 3
+  },
+  "outcome_counts": {
+    "success": 3
+  },
+  "success_rate": 1.0,
+  "clean_run_rate": 1.0,
+  "total_recoveries": 0,
+  "total_interventions": 0,
+  "total_drift_signals": 0,
+  "eligible_for_approval": true,
+  "ineligible_reasons": [],
+  "runs": [
+    {
+      "run": 1,
+      "run_id": "replay-20260915T095200Z-5373",
+      "status": "success",
+      "outcome_code": null,
+      "step_id": null,
+      "evidence": "evidence/replay-20260915T095200Z-5373",
+      "artifact_sha256": "4bee6ab67c4c768b90635dabea9d6039d8cd6f280a86d5bb0e08b97da0ab054a",
+      "recoveries": 0,
+      "interventions": 0,
+      "drift_signals": 0,
+      "clean": true,
+      "error": null
+    },
+    {
+      "run": 2,
+      "run_id": "replay-20260915T095231Z-3c30",
+      "status": "success",
+      "outcome_code": null,
+      "step_id": null,
+      "evidence": "evidence/replay-20260915T095231Z-3c30",
+      "artifact_sha256": "4bee6ab67c4c768b90635dabea9d6039d8cd6f280a86d5bb0e08b97da0ab054a",
+      "recoveries": 0,
+      "interventions": 0,
+      "drift_signals": 0,
+      "clean": true,
+      "error": null
+    },
+    {
+      "run": 3,
+      "run_id": "replay-20260915T095301Z-bb21",
+      "status": "success",
+      "outcome_code": null,
+      "step_id": null,
+      "evidence": "evidence/replay-20260915T095301Z-bb21",
+      "artifact_sha256": "4bee6ab67c4c768b90635dabea9d6039d8cd6f280a86d5bb0e08b97da0ab054a",
+      "recoveries": 0,
+      "interventions": 0,
+      "drift_signals": 0,
+      "clean": true,
+      "error": null
+    }
+  ]
+}

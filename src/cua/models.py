@@ -172,6 +172,8 @@ class CampaignSpec:
     url: str
     selectors: list[str]          # the declared inputs whose values pick the path
     scenarios: list[Scenario]
+    outputs: dict = field(default_factory=dict)  # optional declared contract: name -> {type, required, pattern}
+    outcomes: list[dict] = field(default_factory=list)  # reviewer-declared outcomes every scenario records
 
 
 @dataclass

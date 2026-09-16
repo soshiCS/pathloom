@@ -1,37 +1,38 @@
 {
   "name": "checkout_paths",
-  "goal": "Log in to SauceDemo with the supplied test credentials, add {{product_name}} to the cart, open the cart the way the cart_route parameter says, fill in the checkout information, reach the Checkout Overview page and return the total. Stop before clicking Finish.",
+  "goal": "Log in to SauceDemo with the supplied credentials. Follow the selected routes exactly. If product_route is 'inventory', add {{product_name}} to the cart directly from the Products page. If product_route is 'details', first open the {{product_name}} product details page and add it to the cart from there. Then, if cart_route is 'cart_link', open the cart by clicking the visible shopping cart control at the top right; if cart_route is 'cart_url', navigate to https://www.saucedemo.com/cart.html. Click Checkout, fill in the first name, last name and postal code, click Continue to reach the Checkout: Overview page, extract only the displayed Total as the output named total, and stop there. Never click Finish.",
   "url": "https://www.saucedemo.com/",
-  "selectors": ["cart_route", "zip_source"],
+  "selectors": ["product_route", "cart_route"],
+  "outputs": {
+    "total": {"type": "number", "required": true, "pattern": "Total: \\$\\s*([\\d.]+)"}
+  },
   "scenarios": [
     {
-      "name": "link_postal",
+      "name": "inventory_cart_link",
       "params": {
         "username": "standard_user", "password": "secret_sauce", "product_name": "Sauce Labs Backpack",
-        "first_name": "Test", "last_name": "User",
-        "cart_route": "cart_link", "zip_source": "postal_code", "postal_code": "10001"
+        "first_name": "Test", "last_name": "User", "postal_code": "10001",
+        "product_route": "inventory", "cart_route": "cart_link"
       },
       "sensitive": ["password"]
     },
     {
-      "name": "url_postal",
+      "name": "details_cart_link",
       "params": {
         "username": "standard_user", "password": "secret_sauce", "product_name": "Sauce Labs Backpack",
-        "first_name": "Test", "last_name": "User",
-        "cart_route": "cart_url", "cart_url": "https://www.saucedemo.com/cart.html",
-        "zip_source": "postal_code", "postal_code": "10001"
+        "first_name": "Test", "last_name": "User", "postal_code": "10001",
+        "product_route": "details", "cart_route": "cart_link"
       },
       "sensitive": ["password"]
     },
     {
-      "name": "url_phone",
+      "name": "inventory_cart_url",
       "params": {
         "username": "standard_user", "password": "secret_sauce", "product_name": "Sauce Labs Backpack",
-        "first_name": "Test", "last_name": "User",
-        "cart_route": "cart_url", "cart_url": "https://www.saucedemo.com/cart.html",
-        "zip_source": "phone", "phone": "+15551234567"
+        "first_name": "Test", "last_name": "User", "postal_code": "10001",
+        "product_route": "inventory", "cart_route": "cart_url"
       },
-      "sensitive": ["password", "phone"]
+      "sensitive": ["password"]
     }
   ]
 }

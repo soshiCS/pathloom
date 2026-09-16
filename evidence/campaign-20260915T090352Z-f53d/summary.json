@@ -1,0 +1,87 @@
+{
+  "campaign_id": "campaign-20260915T090352Z-f53d",
+  "status": "failed",
+  "spec": "scenarios/member_account_prepare.json",
+  "capability": "member_account_prepare",
+  "selectors": [
+    "lookup_method",
+    "account_type"
+  ],
+  "artifact": null,
+  "scenario_count": 3,
+  "successful_scenario_count": 2,
+  "scenarios": [
+    {
+      "name": "member_id_savings",
+      "selectors": {
+        "lookup_method": "member_id",
+        "account_type": "savings"
+      },
+      "params": [
+        "account_type",
+        "lookup_method",
+        "member_id",
+        "opening_deposit",
+        "password",
+        "username"
+      ],
+      "sensitive": [
+        "password"
+      ],
+      "status": "succeeded",
+      "run_id": "discovery-20260915T090352Z-b7ab",
+      "evidence": "evidence/discovery-20260915T090352Z-b7ab",
+      "trace": "evidence/discovery-20260915T090352Z-b7ab/member_id_savings.trace.json",
+      "node_path": null,
+      "error": null
+    },
+    {
+      "name": "phone_savings",
+      "selectors": {
+        "lookup_method": "phone",
+        "account_type": "savings"
+      },
+      "params": [
+        "account_type",
+        "lookup_method",
+        "opening_deposit",
+        "password",
+        "phone",
+        "username"
+      ],
+      "sensitive": [
+        "password"
+      ],
+      "status": "succeeded",
+      "run_id": "discovery-20260915T090507Z-5880",
+      "evidence": "evidence/discovery-20260915T090507Z-5880",
+      "trace": "evidence/discovery-20260915T090507Z-5880/phone_savings.trace.json",
+      "node_path": null,
+      "error": null
+    },
+    {
+      "name": "member_id_checking",
+      "selectors": {
+        "lookup_method": "member_id",
+        "account_type": "checking"
+      },
+      "params": [
+        "account_type",
+        "lookup_method",
+        "member_id",
+        "opening_deposit",
+        "password",
+        "username"
+      ],
+      "sensitive": [
+        "password"
+      ],
+      "status": "failed",
+      "run_id": "discovery-20260915T090613Z-824e",
+      "evidence": "evidence/discovery-20260915T090613Z-824e",
+      "trace": null,
+      "node_path": null,
+      "error": "outcome 'invalid_credentials' was declared by the planner with a different definition than the reviewer's: {'code': 'invalid_credentials', 'kind': 'business', 'detect': {'text_contains': 'Invalid credentials'}} vs {'code': 'invalid_credentials', 'kind': 'business', 'detect': {'text_contains': 'Invalid training credentials'}}"
+    }
+  ]
+}

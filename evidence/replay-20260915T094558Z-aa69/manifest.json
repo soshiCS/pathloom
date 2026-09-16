@@ -1,0 +1,24 @@
+{
+  "manifest_schema_version": "1.0",
+  "run_id": "replay-20260915T094558Z-aa69",
+  "artifact_path": "artifacts/member_account_prepare.v1.json",
+  "artifact_file": "member_account_prepare.v1.json",
+  "sha256": "4bee6ab67c4c768b90635dabea9d6039d8cd6f280a86d5bb0e08b97da0ab054a",
+  "capability": "member_account_prepare",
+  "capability_version": 1,
+  "schema_version": "2.0",
+  "status": "draft",
+  "result_status": "success",
+  "outcome_code": null,
+  "param_names": [
+    "account_type",
+    "lookup_method",
+    "member_id",
+    "opening_deposit",
+    "password",
+    "username"
+  ],
+  "sensitive_params": [
+    "password"
+  ]
+}

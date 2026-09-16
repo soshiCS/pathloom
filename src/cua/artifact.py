@@ -183,7 +183,7 @@ def validate_contract(artifact) -> None:
         raise ArtifactError("success checkpoint is required")
     validate_placeholders(artifact.success, set(artifact.inputs), "success checkpoint")
     for outcome in artifact.outcomes:
-        _validate_outcome(outcome)
+        validate_outcome(outcome)
     for name, spec in artifact.outputs.items():
         if "type" not in spec:
             raise ArtifactError(f"output {name!r} has no type")
@@ -230,14 +230,34 @@ def validate_placeholders(checkpoint: dict, declared_inputs: set[str], where: st
             raise ArtifactError(f"{where}: placeholders {sorted(unknown)} are not declared inputs")
 
 
-def _validate_outcome(outcome: dict) -> None:
-    if not outcome.get("code") or outcome.get("kind") not in OUTCOME_KINDS:
+DETECT_KEYS = ("text_contains", "text_missing", "dialog_contains")
+RECOVER_ACTIONS = ("click",)
+
+
+def validate_outcome(outcome: dict) -> None:
+    """One declared outcome, whoever declared it: a code, a kind, a typed detection, and for a
+    recoverable one a recovery replay can perform (a click on a locator ladder)."""
+    if not isinstance(outcome, dict) or not outcome.get("code") or outcome.get("kind") not in OUTCOME_KINDS:
         raise ArtifactError(f"outcome {outcome!r} needs a code and a kind in {sorted(OUTCOME_KINDS)}")
-    detect = outcome.get("detect") or {}
-    if not any(detect.get(key) for key in ("text_contains", "text_missing", "dialog_contains")):
-        raise ArtifactError(f"outcome {outcome['code']}: detect needs text_contains, text_missing, or dialog_contains")
-    if outcome["kind"] == "recoverable" and not outcome.get("recover"):
-        raise ArtifactError(f"outcome {outcome['code']}: recoverable outcomes need a recover action")
+    code = outcome["code"]
+    detect = outcome.get("detect")
+    if not isinstance(detect, dict) or not detect:
+        raise ArtifactError(f"outcome {code}: detect needs text_contains, text_missing, or dialog_contains")
+    unknown = set(detect) - set(DETECT_KEYS)
+    if unknown:
+        raise ArtifactError(f"outcome {code}: detect has unknown keys {sorted(unknown)}")
+    if not all(isinstance(value, str) and value for value in detect.values()):
+        raise ArtifactError(f"outcome {code}: every detect value must be a non-empty string")
+    recover = outcome.get("recover")
+    if outcome["kind"] == "recoverable":
+        if not isinstance(recover, dict) or recover.get("action") not in RECOVER_ACTIONS:
+            raise ArtifactError(f"outcome {code}: recoverable outcomes need a recover action in {RECOVER_ACTIONS}")
+        target = recover.get("target")
+        strategies = target.get("strategies") if isinstance(target, dict) else None
+        if not isinstance(strategies, list) or not strategies or not all(isinstance(s, dict) for s in strategies):
+            raise ArtifactError(f"outcome {code}: recover needs a target with a non-empty list of locator strategies")
+    elif recover is not None:
+        raise ArtifactError(f"outcome {code}: only recoverable outcomes carry a recover action")
 
 
 # ---------- save / load ----------
