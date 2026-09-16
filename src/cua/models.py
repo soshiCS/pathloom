@@ -15,6 +15,8 @@ class Element:
     box: tuple[int, int, int, int] = (0, 0, 0, 0)  # x, y, w, h — for screenshot-coordinate fallback
     context: str = ""             # label of the item this control belongs to (e.g. the product card's title)
     ref: str = ""                 # opaque handle owned by the Surface that observed it; never stored in artifacts
+    states: dict = field(default_factory=dict)  # computed states when known: {"checked": "true", "expanded": "false"}
+    source: str = "dom"           # which perception source(s) produced it: dom | ax | dom+ax; runtime only
 
 
 @dataclass

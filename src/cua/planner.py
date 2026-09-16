@@ -72,7 +72,9 @@ def render_observation(observation: Observation) -> str:
         detail = f' text="{element.text}"' if element.text and element.text != element.name else ""
         # The enclosing item is shown only when the name alone would be ambiguous.
         where = f' (in: {element.context})' if element.context and is_ambiguous(element, observation) else ""
-        lines.append(f'[{index}] {element.role} "{element.name}"{detail}{where}')
+        # Computed states (checked, expanded, ...) let the model tell a ticked box from an empty one.
+        states = f" ({', '.join(f'{k}={v}' for k, v in element.states.items())})" if element.states else ""
+        lines.append(f'[{index}] {element.role} "{element.name}"{detail}{states}{where}')
     return "\n".join(lines)
 
 

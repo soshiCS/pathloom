@@ -54,10 +54,34 @@ requiredness and regex of each output whatever the planner proposes, so independ
 record one contract.
 
 Perception (`surface.py`) is an operator's view, not the DOM: role, accessible name, visible
-text, enclosing item, box. Rules added after live runs: a native control's tag role wins over a
-conflicting ARIA role, while ARIA supplies the role when no native control role exists; an
-icon-only control is named by its test id or element id rather than by a numeric badge; text
-nested inside a control is the control's, not a separate element.
+text, enclosing item, box, and computed states. Rules added after live runs: a native control's
+tag role wins over a conflicting ARIA role, while ARIA supplies the role when no native control
+role exists; an icon-only control is named by its test id or element id rather than by a numeric
+badge; text nested inside a control is the control's, not a separate element.
+
+**Accessibility merge (Chromium).** Each observation runs the page projection, then reads
+`DOM.getDocument` and `Accessibility.getFullAXTree` over one CDP session (opened lazily, reused).
+`dom_paths` recomputes the projection's `tag:nth-of-type(n)` path for every element from the DOM
+tree, so an accessibility node's `backendDOMNodeId` maps to the same `ref` the projection uses:
+no per-node protocol call. Nodes are kept when not ignored and their computed role is in
+`AX_ROLES` (checkbox, radio, switch, combobox, listbox, option, menuitem, tab, slider,
+spinbutton, button, link, textbox, treeitem), bounded to `MAX_AX_NODES`. States kept:
+`checked`, `expanded`, `selected`, `pressed` with any value, and `disabled`, `required`,
+`readonly` only when true. Merge rules by `ref`: projected element present with a native role
+-> keep it, add states, source `dom+ax`; projected element is generic `text` -> upgrade to the
+computed role and name, source `ax`; not projected -> one page call enriches all such nodes with
+visibility, box, text (never a password's value, never a checkbox's `on`) and enclosing item,
+invisible ones are dropped, source `ax`. The result is sorted by document order. The merge works
+on copies, so a failure at any stage (tree, mapping, enrichment) returns the caller's projection
+untouched, object for object, and sets `last_accessibility_error`; the next observation recovers.
+Registered secrets are masked in names, texts, contexts and dialog text. Screenshots mask them
+too: text nodes (which covers option labels) and the current values of text-like inputs and
+textareas are replaced for the capture and restored exactly in `finally`; values are assigned
+directly, so no input or change event fires, and password fields already render as dots. `states` and `source`
+are runtime-only fields on `Element`; artifacts are unchanged. Limits: Chromium only; option
+nodes inside a closed `<select>` are invisible and therefore not listed; shadow DOM and iframes
+are not walked by either source; screenshot vision is a planned, bounded, discovery-only
+fallback and not part of this pass.
 
 ## 3. Graph replay
 

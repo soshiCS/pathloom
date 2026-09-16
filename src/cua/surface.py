@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import replace
 from typing import Protocol
 
 from .models import Element, Locator, Observation, TransientError
@@ -75,6 +76,10 @@ def locator_for(element: Element, ambiguous: bool = False) -> Locator:
     return Locator(strategies=strategies)
 
 
+def clean_text(value) -> str:
+    return " ".join(str(value or "").split())
+
+
 def role_matches(element: Element, strategy: dict) -> bool:
     """role + name, and the enclosing item when the strategy names one."""
     if (element.role, element.name) != (strategy["role"], strategy["name"]):
@@ -83,10 +88,9 @@ def role_matches(element: Element, strategy: dict) -> bool:
 
 
 # JavaScript that walks the rendered page and reports controls as an operator sees them.
-# It runs in the page, so it is the only part of the system that knows about HTML.
-OBSERVE_JS = r"""
-() => {
-  const out = [];
+# It runs in the page, so it is the only part of the system that knows about HTML. The helpers are
+# shared by the projection (OBSERVE_JS) and by the enrichment of accessibility-only nodes (ENRICH_JS).
+HELPERS_JS = r"""
   const isVisible = (el) => {
     const r = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
@@ -155,6 +159,10 @@ OBSERVE_JS = r"""
     }
     return '';
   };
+"""
+
+OBSERVE_JS = "() => {" + HELPERS_JS + r"""
+  const out = [];
   const dialogEl = document.querySelector('[role="dialog"], dialog[open]');
   const dialog = dialogEl && isVisible(dialogEl) ? clean(dialogEl.innerText) : null;
 
@@ -186,26 +194,136 @@ OBSERVE_JS = r"""
 }
 """
 
-# Temporarily blank out text nodes containing a secret before a screenshot, then restore them.
+# Geometry, visibility, text and enclosing item for elements the accessibility tree found and the
+# projection did not list. One call for all of them. A password field's value is never read.
+ENRICH_JS = "(refs) => {" + HELPERS_JS + r"""
+  return refs.map((ref) => {
+    let el = null;
+    try { el = document.querySelector(ref); } catch (e) { el = null; }
+    if (!el) return null;
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    let text = '';
+    if (tag === 'input' || tag === 'select' || tag === 'textarea') {
+      // a password is never read; a checkbox's or radio's value ("on") says nothing to an operator
+      text = (type === 'password' || type === 'checkbox' || type === 'radio') ? '' : (el.value || '');
+    } else text = clean(el.innerText || el.textContent);
+    return {visible: isVisible(el), box: box(el), context: contextOf(el), text: clean(text)};
+  });
+}
+"""
+
+# Temporarily mask registered secrets before a screenshot, then restore them exactly. Two kinds of
+# rendered text carry a value: text nodes (page copy, option labels, so a <select> shows the masked
+# label too) and the current value of text-like form controls (<input>, <textarea>), which is not a
+# text node. Values are assigned directly, which fires no input/change event and touches no app
+# state; a password field renders as dots already and is left alone. The originals live only in
+# page memory between the two calls.
 MASK_JS = r"""
 (secrets) => {
-  window.__cuaMasked = [];
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  let node;
-  while ((node = walker.nextNode())) {
-    let text = node.textContent, changed = false;
+  const mask = (text) => {
+    let changed = false;
     for (const secret of secrets) {
       if (secret && text.includes(secret)) { text = text.split(secret).join('••••••'); changed = true; }
     }
-    if (changed) { window.__cuaMasked.push([node, node.textContent]); node.textContent = text; }
+    return changed ? text : null;
+  };
+  window.__cuaMasked = [];
+  window.__cuaMaskedValues = [];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    const masked = mask(node.textContent);
+    if (masked !== null) { window.__cuaMasked.push([node, node.textContent]); node.textContent = masked; }
+  }
+  const TEXT_TYPES = ['text', 'search', 'email', 'tel', 'url', 'number', ''];
+  for (const el of document.querySelectorAll('input, textarea')) {
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    if (el.tagName.toLowerCase() === 'input' && !TEXT_TYPES.includes(type)) continue;   // passwords stay dots
+    const masked = mask(el.value || '');
+    if (masked !== null) { window.__cuaMaskedValues.push([el, el.value]); el.value = masked; }
   }
 }
 """
-UNMASK_JS = "() => { for (const [node, text] of (window.__cuaMasked || [])) node.textContent = text; window.__cuaMasked = []; }"
+UNMASK_JS = r"""
+() => {
+  for (const [node, text] of (window.__cuaMasked || [])) node.textContent = text;
+  for (const [el, value] of (window.__cuaMaskedValues || [])) el.value = value;
+  window.__cuaMasked = [];
+  window.__cuaMaskedValues = [];
+}
+"""
+
+
+# Accessibility roles worth surfacing as controls (Chromium's computed role -> the role we perceive).
+AX_ROLES = {
+    "checkbox": "checkbox", "radio": "radio", "switch": "switch", "combobox": "combobox", "listbox": "listbox",
+    "option": "option", "menuitem": "menuitem", "menuitemcheckbox": "menuitem", "menuitemradio": "menuitem",
+    "tab": "tab", "slider": "slider", "spinbutton": "spinbutton", "button": "button", "togglebutton": "button",
+    "link": "link", "textbox": "textbox", "searchbox": "textbox", "treeitem": "treeitem",
+}
+# Computed states worth showing; anything else Chromium reports (focusable, invalid=false, ...) is noise.
+# For the first four a false value is information (an unticked box, a collapsed menu); for the rest only
+# true says anything, so required=false or readonly=false is dropped.
+AX_STATES = ("checked", "expanded", "selected", "pressed", "disabled", "required", "readonly")
+AX_STATES_ONLY_WHEN_TRUE = ("disabled", "required", "readonly")
+MAX_AX_NODES = 400          # bound on accessibility candidates merged per observation (large pages)
+SECRET_MASK = "••••••"
+
+
+def dom_paths(root: dict) -> tuple[dict[int, str], dict[str, int]]:
+    """From a CDP DOM.getDocument tree: backend node id -> structural path, and path -> document order.
+
+    The path is built exactly like the page script's `cssPath` (tag:nth-of-type(n) from the body
+    down, the <html> element excluded), so an accessibility node and a projected element that share
+    a backing element share a `ref` and can be merged without a per-node protocol call.
+    """
+    paths: dict[int, str] = {}
+    order: dict[str, int] = {}
+
+    def walk(node: dict, prefix: str | None) -> None:
+        counts: dict[str, int] = {}
+        for child in node.get("children") or []:
+            if child.get("nodeType") != 1:
+                continue
+            tag = (child.get("localName") or child.get("nodeName") or "").lower()
+            counts[tag] = counts.get(tag, 0) + 1
+            if prefix is None:                      # the <html> element: not part of any path
+                walk(child, "" if tag == "html" else None)
+                continue
+            part = f"{tag}:nth-of-type({counts[tag]})"
+            path = part if prefix == "" else f"{prefix} > {part}"
+            if "backendNodeId" in child:
+                paths[child["backendNodeId"]] = path
+            order[path] = len(order)
+            walk(child, path)
+
+    walk(root, None)
+    return paths, order
+
+
+def ax_states(node: dict) -> dict:
+    states = {}
+    for prop in node.get("properties") or []:
+        name = prop.get("name")
+        if name not in AX_STATES:
+            continue
+        value = (prop.get("value") or {}).get("value")
+        value = str(value).lower() if isinstance(value, bool) else str(value)
+        if name in AX_STATES_ONLY_WHEN_TRUE and value != "true":
+            continue
+        states[name] = value
+    return states
 
 
 class PlaywrightSurface:
-    """Real browser adapter backed by Playwright (Chromium)."""
+    """Real browser adapter backed by Playwright (Chromium).
+
+    Perception merges two structured sources: the page projection (OBSERVE_JS: visible text,
+    geometry, structural refs, action handles) and Chromium's computed accessibility tree read
+    over CDP (computed roles, accessible names, states such as checked or expanded). The merge is
+    deterministic, keyed by the backing element's structural path; see `_merge_accessibility`.
+    """
 
     def __init__(self, headless: bool = True, timeout_ms: int = 15000, secrets: tuple[str, ...] = ()):
         from playwright.sync_api import sync_playwright
@@ -218,6 +336,8 @@ class PlaywrightSurface:
         self.secrets = tuple(s for s in secrets if s)   # values that must never appear in evidence
         self.title = ""
         self._last_document_status: int | None = None
+        self._cdp = None                          # CDP session for the accessibility tree, opened lazily
+        self.last_accessibility_error: str | None = None   # why the last observation was DOM-only, if it was
         # Track the status of the last top-level document so a 5xx after a click is noticed.
         self._page.on("response", self._remember_document_status)
 
@@ -237,7 +357,95 @@ class PlaywrightSurface:
         self.title = raw["title"]
         elements = [Element(role=e["role"], name=e["name"], text=e["text"], box=tuple(e["box"]),
                             context=e["context"], ref=e["ref"]) for e in raw["elements"]]
-        return Observation(url=raw["url"], elements=elements, dialog=raw["dialog"])
+        elements = self._merge_accessibility(elements)
+        return Observation(url=raw["url"], elements=[self._masked(e) for e in elements],
+                           dialog=self._mask(raw["dialog"]) if raw["dialog"] else raw["dialog"])
+
+    # ---------- accessibility tree ----------
+
+    def _accessibility_nodes(self) -> tuple[list[dict], dict[int, str], dict[str, int]]:
+        """Chromium's computed accessibility tree and the DOM paths to map it back: two protocol calls."""
+        if self._cdp is None:
+            self._cdp = self._page.context.new_cdp_session(self._page)
+            self._cdp.send("Accessibility.enable")
+        document = self._cdp.send("DOM.getDocument", {"depth": -1})
+        paths, order = dom_paths(document["root"])
+        tree = self._cdp.send("Accessibility.getFullAXTree")
+        return tree.get("nodes") or [], paths, order
+
+    def _merge_accessibility(self, elements: list[Element]) -> list[Element]:
+        """Fold accessibility nodes into the projection; on any failure return the projection unchanged.
+
+        Rules, applied per accessibility node whose computed role is in AX_ROLES and whose backing
+        element is known: a node backing an element the projection already lists keeps that
+        element's native role, name, text and geometry and only gains states (a generic `text`
+        element, however, is upgraded to the accessibility role and name); a node backing an
+        element the projection skipped becomes a new element, enriched with geometry, visible text
+        and enclosing item by one page call. Everything is then ordered by document position.
+
+        The merge is transactional: it works on copies, and the caller's elements are never
+        touched, so a failure at any stage (tree, mapping, enrichment) hands back exactly the
+        projection that came in.
+        """
+        try:
+            nodes, paths, order = self._accessibility_nodes()
+            merged = [replace(element, states=dict(element.states)) for element in elements]   # copies only
+            by_ref = {element.ref: element for element in merged}
+            pending: list[tuple[str, str, str, dict]] = []
+            seen: set[str] = set()
+            for node in nodes:
+                role = AX_ROLES.get(str((node.get("role") or {}).get("value", "")).lower())
+                ref = paths.get(node.get("backendDOMNodeId"))
+                if node.get("ignored") or role is None or ref is None or ref in seen:
+                    continue
+                seen.add(ref)
+                if len(seen) > MAX_AX_NODES:
+                    break
+                name = clean_text((node.get("name") or {}).get("value", ""))
+                states = ax_states(node)
+                existing = by_ref.get(ref)
+                if existing is None:
+                    pending.append((ref, role, name, states))
+                elif existing.role == "text":
+                    existing.role, existing.name = role, name or existing.text
+                    existing.states, existing.source = states, "ax"
+                else:
+                    existing.states, existing.source = states, "dom+ax"
+            merged = merged + self._enrich(pending)
+            big = len(order) + 1
+            result = sorted(merged, key=lambda element: order.get(element.ref, big))
+        except Exception as error:   # a supplemental source must never cost the observation
+            self.last_accessibility_error = f"{type(error).__name__}: {error}"
+            return elements
+        self.last_accessibility_error = None
+        return result
+
+    def _enrich(self, pending: list[tuple[str, str, str, dict]]) -> list[Element]:
+        if not pending:
+            return []
+        details = self._page.evaluate(ENRICH_JS, [ref for ref, _, _, _ in pending])
+        added = []
+        for (ref, role, name, states), detail in zip(pending, details):
+            if not detail or not detail["visible"]:
+                continue
+            added.append(Element(role=role, name=name or detail["text"], text=detail["text"], box=tuple(detail["box"]),
+                                 context=detail["context"], ref=ref, states=states, source="ax"))
+        return added
+
+    # ---------- secrets ----------
+
+    def _mask(self, text: str) -> str:
+        for secret in self.secrets:
+            if secret in text:
+                text = text.replace(secret, SECRET_MASK)
+        return text
+
+    def _masked(self, element: Element) -> Element:
+        if not self.secrets:
+            return element
+        element.name, element.text, element.context = (self._mask(element.name), self._mask(element.text),
+                                                       self._mask(element.context))
+        return element
 
     def _settle(self) -> None:
         """Wait for a just-triggered navigation to finish, then for client-side rendering to stop.
@@ -329,7 +537,11 @@ class PlaywrightSurface:
             raise TransientError(f"server returned HTTP {response.status}", url=url)
 
     def screenshot(self, path: str) -> str:
-        """Capture the page with any registered secret masked out of the rendered text."""
+        """Capture the page with any registered secret masked out of the rendered text and form values.
+
+        Masking and restoration are the two page calls above; restoration runs in `finally`, so a
+        failed capture never leaves a masked value behind.
+        """
         if self.secrets:
             self._page.evaluate(MASK_JS, list(self.secrets))
         try:

@@ -12,7 +12,11 @@ implementation), `Planner` (the LLM; Anthropic and OpenAI adapters, one strict t
 decision, stateless), `Operator` (a human channel on the same live session) and the artifact
 itself, the contract between discovery and replay. Discovery is `observe -> decide -> policy ->
 act -> verify -> record`. Perception is an operator's view rather than the DOM: controls with a
-role, an accessible name, visible text and the item they belong to. What gets recorded is the
+role, an accessible name, visible text, the item they belong to and, in the browser adapter,
+computed states merged from Chromium's accessibility tree (the projection keeps native roles and
+geometry; the tree adds states, upgrades generic text that is really a control, and adds
+controls the projection missed; nodes are matched by a shared structural path in two protocol
+calls, and the observation degrades to the projection if the tree cannot be read). What gets recorded is the
 reusable flow, never the transcript: each performed action becomes a step with a locator ladder
 and a checkpoint that was actually seen, inputs become `{{placeholders}}`, and outcomes the
 model saw or declared are kept with their source.
@@ -89,6 +93,10 @@ irreversible final action kept in a separate, supervised-only capability
 specs may carry reviewer-declared outcomes, validated by the artifact's own rules, so states
 discovery never visits still classify deterministically. No live model run against it has been
 made yet; the suite drives it through the real browser adapter with a scripted planner.
+
+Accessibility support is Chromium-specific and confined to the adapter; the seam, the artifact
+and both engines are unchanged, and screenshot vision is a planned, bounded, discovery-only
+fallback for surfaces with no usable tree, not part of this pass.
 
 Multi-tenant reuse is a layering the schema is shaped for but does not implement: a base
 artifact per vendor product, per-tenant `entry_url` and `allowed_hosts`, overlays for individual

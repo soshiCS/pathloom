@@ -37,7 +37,7 @@ One Python process, four seams, no services. The Python package is still called 
 
 | Module | Role |
 |---|---|
-| `src/cua/surface.py` | `Surface` seam and the Playwright/Chromium adapter: perception as an operator sees it (role, name, text, enclosing item), locator ladders, secret masking |
+| `src/cua/surface.py` | `Surface` seam and the Playwright/Chromium adapter: perception as an operator sees it (role, name, text, enclosing item, computed states), merged from the page projection and Chromium's accessibility tree; locator ladders; secret masking |
 | `src/cua/planner.py` | `Planner` seam; `ClaudePlanner` and `OpenAIPlanner`, one strict tool call per decision, stateless |
 | `src/cua/agent.py` | Discovery loop: observe, decide, policy, act, verify, record; parameterizes values and locators; outputs and outcomes |
 | `src/cua/campaign.py` | Human-declared scenarios: one discovery run per scenario on a fresh session, campaign evidence and summary |
@@ -131,8 +131,8 @@ to watch the browser, and take over the same session from the terminal whenever 
 python -m pytest
 ```
 
-283 tests, all offline. The browser and the model are replaced at their protocol boundaries by
-`tests/fake_surface.py` and `tests/scripted_planner.py`. The 20 tests marked `browser` (perception
+296 tests, all offline. The browser and the model are replaced at their protocol boundaries by
+`tests/fake_surface.py` and `tests/scripted_planner.py`. The 33 tests marked `browser` (perception
 rules on a local page, and the MemberOps campaigns driven through the real Chromium adapter by a
 scripted planner, then replayed in every runtime mode) start a local headless Chromium with no
 network and skip when it is absent; they take about nine minutes, so
@@ -233,12 +233,39 @@ stopped at the gate with zero actions, a locked-out user classified as a busines
 the earlier single-artifact evidence (`checkout_review.v1.json`, discovered with `claude-opus-5`),
 including the run that proves an appended `Finish` step is never clicked unattended.
 
+## Browser perception
+
+The Chromium adapter merges two structured sources into one observation. The **page projection**
+(a script run in the page) supplies visible text, geometry, the structural path used as the
+action handle, and the item a control belongs to. **Chromium's computed accessibility tree**,
+read over the DevTools protocol, supplies computed roles, accessible names and states
+(`checked`, `expanded`, `selected`, `pressed`, and `disabled`, `required`, `readonly` when true).
+Nodes are mapped back to their backing elements by recomputing the same structural path from
+one `DOM.getDocument` call, so the merge costs two protocol calls plus one page call for
+enrichment, never a call per node. Rules: a projected element keeps its native role, name and
+geometry and gains states (an `<a href role="button">` stays a link, so recorded artifacts keep
+resolving); a generic text element that the tree says is a control is upgraded to that role and
+name; a control the projection never listed (a native checkbox, a radio, a tab) is added with
+its geometry and text. Elements are ordered by document position and deduplicated by backing
+element. Accessibility-only controls get the usual locator ladder (role and name, structural
+path, coordinates) and are clicked or typed through the same handle, so they discover, save and
+replay like any other control, with no model involved. If the tree cannot be read, the
+observation is the projection alone, object for object, and the adapter records why. Password
+values are never read from either source, registered secrets are masked in every name, text and
+dialog, and screenshots mask them in page text and in the current values of text-like inputs and
+textareas for the capture only (restored exactly afterwards, with no application event fired).
+Limits:
+this is Chromium-specific and lives entirely inside the adapter; the planner's text rendering
+shows states but not geometry; screenshot vision remains a planned, bounded, discovery-only
+fallback and is not part of this pass.
+
 ## Safety in one paragraph
 
 A host allowlist and a blocked-control list are checked before every action in discovery and in
 replay, and cannot be overridden by an artifact. Clicks on controls that look irreversible
 (`Finish`, `Pay`, `Delete`, ...) require a human, and graph nodes carry an explicit `effect`
 that the `--irreversible-policy` decides on; `unknown` effects always need a person. Sensitive
-inputs reach neither the model nor disk: the model sees `{{password}}`, logs and screenshots are
-masked, and an artifact containing a secret refuses to save. Every replay leaves a bundle with the
+inputs reach neither the model nor disk: the model sees `{{password}}`, observations, logs and
+screenshots (page text and form values) are masked, and an artifact containing a secret refuses
+to save. Every replay leaves a bundle with the
 exact artifact that ran, a redacted result and a manifest with its SHA-256.
