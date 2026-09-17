@@ -10,10 +10,10 @@ from src.cua import campaign as campaign_module
 from src.cua import evidence as evidence_module
 from src.cua.__main__ import main
 from src.cua.campaign import CampaignError, CampaignFailed, run_campaign, spec_from_dict
-from src.cua.models import Action
+from src.cua.artifact import linear_path, load_artifact
 from src.cua.escalation import NoOperator
-from src.cua.graph import load_graph
-from src.cua.graph_replay import replay_graph
+from src.cua.models import Action
+from src.cua.replay import replay as replay_engine
 from tests.context import ENTRY, HOSTS, Escalator, Policy, RunLog, SessionControl
 from tests.fake_surface import FakeSurface
 from tests.scripted_planner import MONEY, ScriptedPlanner, ScriptedStep
@@ -105,8 +105,8 @@ def run(data=None, planner_factory=scripted, operator=None, surface_factory=None
 def replay(graph, params):
     surface = FakeSurface()
     log = RunLog("replay", secrets=("secret_sauce", PHONE))
-    result = replay_graph(graph, params, surface, Policy(allowed_hosts=HOSTS),
-                          Escalator(NoOperator(), SessionControl(), log), log)
+    result = replay_engine(graph, params, surface, Policy(allowed_hosts=HOSTS),
+                           Escalator(NoOperator(), SessionControl(), log), log)
     return result, surface
 
 
@@ -199,8 +199,9 @@ def test_each_scenario_is_discovered_on_its_own_session_and_merged_into_one_draf
     assert result.artifact_path.endswith("checkout_paths.v1.json")
     assert sorted(p.name for p in artifact_module.ARTIFACTS_DIR.iterdir()) == ["checkout_paths.v1.json"]
 
-    graph = load_graph(result.artifact_path)
+    graph = load_artifact(result.artifact_path)
     assert graph.status == "draft" and graph.schema_version == "2.0"
+    assert json.loads(open(result.artifact_path).read())["schema_version"] == "2.0"
     assert [n.id for n in graph.nodes if n.kind == "decision"] == ["d1", "d2", "d3"]
     assert graph.entry_node == "d1" and all(s.closed for s in surfaces)
     prov = graph.provenance
@@ -222,7 +223,19 @@ def test_each_scenario_is_discovered_on_its_own_session_and_merged_into_one_draf
         assert (evidence_module.EVIDENCE_DIR / record["run_id"] / "run.jsonl").exists()
         assert record["trace"].endswith(f"{record['name']}.trace.json")
         trace = json.loads(open(record["trace"]).read())
-        assert trace["schema_version"] == "1.0" and trace["name"] == "checkout_paths"
+        assert trace["schema_version"] == "2.0" and trace["name"] == "checkout_paths"
+        assert '"risk"' not in json.dumps(trace)
+        recorded = load_artifact(record["trace"])                 # every trace is a valid linear graph ...
+        assert recorded.entry_node == "s1" and linear_path(recorded)[-1].action.action == "extract"
+        assert all(n.effect in ("none", "reversible") for n in linear_path(recorded))
+        assert {(n.action.action, n.effect, n.retry_safety) for n in linear_path(recorded)} >= {
+            ("navigate", "none", "safe"), ("type", "reversible", "never_retry"),
+            ("click", "reversible", "verify_before_retry"), ("extract", "none", "safe")}
+    # ... and the merged graph keeps every node's classification exactly.
+    for node in graph.nodes:
+        if node.kind == "action":
+            assert node.action.action != "type" or (node.effect, node.retry_safety) == ("reversible", "never_retry")
+            assert node.action.action != "extract" or (node.effect, node.retry_safety) == ("none", "safe")
 
 
 def test_merged_graph_replays_every_scenario_and_only_declared_combinations():
@@ -312,7 +325,7 @@ def test_versions_increment_and_never_overwrite():
     first, _ = run()
     second, _ = run()
     assert first.artifact_path.endswith(".v1.json") and second.artifact_path.endswith(".v2.json")
-    assert load_graph(first.artifact_path).version == 1 and load_graph(second.artifact_path).version == 2
+    assert load_artifact(first.artifact_path).version == 1 and load_artifact(second.artifact_path).version == 2
 
 
 def test_two_scenarios_with_identical_traces_share_one_path():
@@ -481,8 +494,8 @@ def test_declared_outcomes_reach_every_trace_the_graph_and_replay_classification
     assert locked.status == "business_outcome" and locked.outcome_code == "user_locked_out"
     surface = FakeSurface(show_notice=True)
     log = RunLog("replay", secrets=("secret_sauce", PHONE))
-    recovered = replay_graph(graph, dict(SCENARIOS[0]["params"]), surface, Policy(allowed_hosts=HOSTS),
-                             Escalator(NoOperator(), SessionControl(), log), log)
+    recovered = replay_engine(graph, dict(SCENARIOS[0]["params"]), surface, Policy(allowed_hosts=HOSTS),
+                              Escalator(NoOperator(), SessionControl(), log), log)
     assert recovered.status == "success" and recovered.recoveries == ["s1: dismiss_cookie_notice"]
 
 

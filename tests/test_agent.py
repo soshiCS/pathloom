@@ -1,8 +1,12 @@
-"""Discovery loop: observe -> decide -> policy -> act -> verify -> record."""
+"""Discovery loop: observe -> decide -> policy -> act -> verify -> record a linear capability graph."""
+import json
+
 import pytest
 
 from src.cua import agent as agent_module
 from src.cua.agent import DiscoveryFailed, discover
+from src.cua.artifact import linear_path, save_artifact, to_dict, validate
+from src.cua.models import Guard
 from src.cua.escalation import NoOperator
 from src.cua.planner import OpenAIPlanner, action_from_tool_input, render_observation
 from tests.context import (HOSTS, PARAMS, Element, Escalator, Observation, Policy, RecordingOperator, RunLog,
@@ -28,22 +32,46 @@ def no_waiting(monkeypatch):
 
 def test_discovery_records_a_fully_parameterized_flow():
     artifact, _ = run_discovery(checkout_script())
-    actions = [s.action for s in artifact.steps]
+    path = linear_path(artifact)
+    actions = [n.action.action for n in path]
     assert actions == ["navigate", "type", "type", "click", "click", "click", "click", "type", "type", "type",
                        "click", "extract", "extract", "extract", "extract"]
-    assert [s.value for s in artifact.steps if s.action == "type"] == [
+    assert [n.action.value for n in path if n.action.action == "type"] == [
         "{{username}}", "{{password}}", "{{first_name}}", "{{last_name}}", "{{postal_code}}"]
-    assert artifact.steps[4].target.strategies[0] == {"kind": "role", "role": "button", "name": "Add to cart",
-                                                      "context": "{{product_name}}"}   # qualified and parameterized
-    assert artifact.steps[11].target.strategies[0]["name"] == "View details for {{product_name}}"
-    assert artifact.steps[12].target.strategies[0] == {"kind": "text", "text": "Item total:"}
+    assert path[4].action.target.strategies[0] == {"kind": "role", "role": "button", "name": "Add to cart",
+                                                   "context": "{{product_name}}"}   # qualified and parameterized
+    assert path[11].action.target.strategies[0]["name"] == "View details for {{product_name}}"
+    assert path[12].action.target.strategies[0] == {"kind": "text", "text": "Item total:"}
     assert artifact.success == {"text_contains": "Checkout: Overview"}
     assert artifact.status == "draft" and artifact.version == 1
 
 
+def test_discovery_emits_a_valid_linear_graph_with_classified_nodes():
+    artifact, log = run_discovery(checkout_script())
+    validate(artifact)
+    assert artifact.schema_version == "2.0" and artifact.entry_node == "s1"
+    assert [n.id for n in artifact.nodes] == [f"s{i}" for i in range(1, 16)] + ["success"]
+    assert [n.kind for n in artifact.nodes] == ["action"] * 15 + ["terminal"]
+    assert artifact.nodes[-1].status == "success" and artifact.nodes[-1].outcome_code is None
+    assert [(e.source, e.target, e.priority) for e in artifact.edges] == \
+        [(f"s{i}", f"s{i + 1}", 0) for i in range(1, 15)] + [("s15", "success", 0)]
+    assert all(e.guards == [Guard(kind="always")] for e in artifact.edges)
+    classified = {n.id: (n.effect, n.retry_safety) for n in artifact.nodes if n.kind == "action"}
+    assert classified["s1"] == ("none", "safe")                       # the entry navigation has no heading checkpoint
+    assert classified["s2"] == ("reversible", "never_retry")          # a typed field has no checkpoint
+    assert classified["s4"] == ("reversible", "verify_before_retry")  # a click whose expectation was seen
+    assert classified["s12"] == ("none", "safe")                      # extraction is read-only
+    assert artifact.provenance["node_count"] == 16 and artifact.provenance["planner"] == "scripted"
+    assert '"risk"' not in json.dumps(to_dict(artifact))            # the policy verdict is never serialized
+    saved = json.loads(save_artifact(artifact, secrets=("secret_sauce",)).read_text())
+    assert saved["schema_version"] == "2.0" and '"risk"' not in json.dumps(saved)
+    built = [json.loads(l) for l in log.path.read_text().splitlines() if '"artifact_built"' in l][0]
+    assert (built["nodes"], built["edges"], built["entry_node"]) == (16, 15, "s1")
+
+
 def test_discovery_records_checkpoints_for_the_important_states():
     artifact, _ = run_discovery(checkout_script())
-    checkpoints = {s.id: s.checkpoint["text_contains"] for s in artifact.steps if s.checkpoint}
+    checkpoints = {n.id: n.action.checkpoint["text_contains"] for n in linear_path(artifact) if n.action.checkpoint}
     assert checkpoints["s4"] == "Products"                       # login succeeded, product list visible
     assert checkpoints["s5"] == "Remove"                         # requested product added
     assert checkpoints["s6"] == "Your Cart"                      # cart page reached
@@ -85,7 +113,7 @@ def test_password_never_reaches_the_planner_the_artifact_or_the_log():
 
 def test_dialog_dismissal_is_a_recoverable_outcome_not_a_step():
     artifact, _ = run_discovery(checkout_script(), surface=FakeSurface(show_notice=True))
-    assert all("Accept" not in str(s.target) for s in artifact.steps)
+    assert all("Accept" not in str(n.action.target) for n in linear_path(artifact))
     recoverable = next(o for o in artifact.outcomes if o["kind"] == "recoverable")
     assert recoverable["source"] == "observed"
     assert recoverable["recover"]["target"]["strategies"][0]["name"] == "Accept"
@@ -99,7 +127,7 @@ def test_planner_asking_for_finish_needs_human_approval():
     artifact, log = run_discovery(script, surface=surface, operator=operator)
     assert operator.requests[0].kind == "confirm" and "Finish" in operator.requests[0].reason
     assert ("click", "Finish", "") not in surface.actions and surface.screen == "overview"
-    assert all(s.risk == "safe" for s in artifact.steps)
+    assert all(n.effect in ("none", "reversible") for n in linear_path(artifact))
     assert '"decision": "confirm"' in log.path.read_text()
 
 
@@ -108,7 +136,7 @@ def test_denied_action_is_fed_back_and_not_recorded():
     surface = FakeSurface()
     artifact, log = run_discovery(script, surface=surface)
     assert ("navigate", "https://evil.example.com/") not in surface.actions
-    assert all(s.value != "https://evil.example.com/" for s in artifact.steps)
+    assert all(n.action.value != "https://evil.example.com/" for n in linear_path(artifact))
     assert '"decision": "deny"' in log.path.read_text()
 
 
@@ -123,13 +151,15 @@ def test_unmet_expectation_keeps_the_step_but_drops_its_checkpoint():
     script[3] = ScriptedStep("click", "button", "Login", expect="Welcome back")   # wrong guess, real navigation
     artifact, log = run_discovery(script)
     assert '"expectation_failed"' in log.path.read_text()
-    assert artifact.steps[3].action == "click" and artifact.steps[3].checkpoint is None
+    login = linear_path(artifact)[3]
+    assert login.action.action == "click" and login.action.checkpoint is None
+    assert (login.effect, login.retry_safety) == ("reversible", "never_retry")   # unverifiable: never repeated blindly
 
 
 def test_slow_entry_page_is_retried_not_fatal(monkeypatch):
     monkeypatch.setattr(agent_module.time, "sleep", lambda _: None)
     artifact, log = run_discovery(checkout_script(), surface=FakeSurface(faults=["slow_entry"]))
-    assert len(artifact.steps) == 15
+    assert len(linear_path(artifact)) == 15
     assert '"transient_error"' in log.path.read_text()
 
 
@@ -197,7 +227,8 @@ def test_selector_values_are_recorded_literally_never_as_placeholders():
                         planner=ScriptedPlanner(checkout_script()), policy=Policy(allowed_hosts=HOSTS),
                         escalator=Escalator(NoOperator(), SessionControl(), log), log=log, entry_url=ENTRY,
                         sensitive={"password"}, max_steps=25, selectors={"mode"})
-    assert artifact.steps[3].target.strategies[0]["name"] == "Login" and artifact.steps[2].checkpoint is None
+    path = linear_path(artifact)
+    assert path[3].action.target.strategies[0]["name"] == "Login" and path[2].action.checkpoint is None
     assert "mode" in artifact.inputs                              # still a declared input
     assert "{{mode}}" not in str(artifact)
 
@@ -206,4 +237,4 @@ def test_selector_values_are_recorded_literally_never_as_placeholders():
                         planner=ScriptedPlanner(checkout_script()), policy=Policy(allowed_hosts=HOSTS),
                         escalator=Escalator(NoOperator(), SessionControl(), log), log=log, entry_url=ENTRY,
                         sensitive={"password"}, max_steps=25)
-    assert artifact.steps[3].target.strategies[0]["name"] == "{{mode}}"     # without the hint: the hazard
+    assert linear_path(artifact)[3].action.target.strategies[0]["name"] == "{{mode}}"   # without the hint: the hazard

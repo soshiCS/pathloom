@@ -9,15 +9,13 @@ from src.cua import artifact as artifact_module
 from src.cua import evidence as evidence_module
 from src.cua.__main__ import main
 from src.cua.approval import ApprovalError, approve
-from src.cua.artifact import save
+from src.cua.artifact import save_artifact
 from src.cua.escalation import NoOperator
-from src.cua.graph import from_linear, save_graph
-from src.cua.graph import nodes_by_id
-from src.cua.lifecycle import load_any_version, replay_any, sha256_of, write_bundle
+from src.cua.lifecycle import load_artifact, run_replay, sha256_of, write_bundle
 from src.cua.merge import merge_traces
 from src.cua.models import Guard, ReplayResult
 from src.cua.stability import run_stability
-from tests.context import HOSTS, PARAMS, Escalator, Policy, RunLog, SessionControl, checkout_artifact
+from tests.context import HOSTS, PARAMS, Escalator, Policy, RunLog, SessionControl, checkout_artifact, finish_node
 from tests.fake_surface import FakeSurface
 from tests.test_merge import LOGIN, link_trace, url_trace
 
@@ -38,10 +36,8 @@ def sessions(options=None):
     return lambda secrets: Session(**(options or {}))
 
 
-def draft(tmp_path, schema="1.0"):
-    if schema == "1.0":
-        return save(checkout_artifact(), secrets=("secret_sauce",))
-    return save_graph(from_linear(checkout_artifact()), secrets=("secret_sauce",), path=tmp_path / "graph.v1.json")
+def draft(tmp_path=None):
+    return save_artifact(checkout_artifact(), secrets=("secret_sauce",))
 
 
 def report(path, params=None, runs=3, options=None):
@@ -50,7 +46,7 @@ def report(path, params=None, runs=3, options=None):
 
 def campaign_draft(tmp_path):
     graph = merge_traces([link_trace(), url_trace()], ["cart_route"], "campaign-test")
-    return save_graph(graph, secrets=("secret_sauce",), path=tmp_path / "paths.v1.json")
+    return save_artifact(graph, secrets=("secret_sauce",), path=tmp_path / "checkout_paths.v1.json")
 
 
 LINK = {**CART_PARAMS, "cart_route": "cart_link"}
@@ -59,24 +55,21 @@ URL = {**CART_PARAMS, "cart_route": "cart_url", "cart_url": "https://www.saucede
 
 # ---------- approval ----------
 
-@pytest.mark.parametrize("schema", ["1.0", "2.0"])
-def test_approval_creates_the_next_immutable_version_and_leaves_the_draft_alone(tmp_path, schema):
-    path = draft(tmp_path, schema)
+def test_approval_creates_the_next_immutable_version_and_leaves_the_draft_alone(tmp_path):
+    path = draft(tmp_path)
     before = path.read_bytes()
     report_path = report(path)
     approved_path = approve(path, [report_path], "soroush")
 
     assert path.read_bytes() == before                                        # the draft is untouched
     assert approved_path == artifact_module.ARTIFACTS_DIR / "checkout_review.v2.json"
-    approved = load_any_version(approved_path)                                # loads and validates
-    source = load_any_version(path)
-    assert approved.status == "approved" and approved.version == 2 and approved.schema_version == schema
+    approved = load_artifact(approved_path)                                   # loads, validates, checks the name
+    source = load_artifact(path)
+    assert approved.status == "approved" and approved.version == 2 and approved.schema_version == "2.0"
+    assert json.loads(approved_path.read_text())["schema_version"] == "2.0"
     assert approved.inputs == source.inputs and approved.outputs == source.outputs
     assert approved.success == source.success and approved.outcomes == source.outcomes
-    if schema == "1.0":
-        assert approved.steps == source.steps
-    else:
-        assert approved.nodes == source.nodes and approved.edges == source.edges
+    assert approved.nodes == source.nodes and approved.edges == source.edges
     approval = approved.provenance["approval"]
     assert approval["reviewer"] == "soroush" and approval["source_version"] == 1
     assert approval["source_sha256"] == sha256_of(path) and approval["source_path"] == str(path)
@@ -89,7 +82,7 @@ def test_approval_creates_the_next_immutable_version_and_leaves_the_draft_alone(
 
     surface = Session()                                                       # the approved copy behaves the same
     log = RunLog("replay", secrets=("secret_sauce",))
-    result = replay_any(approved, dict(PARAMS), surface, Policy(allowed_hosts=HOSTS),
+    result = run_replay(approved, dict(PARAMS), surface, Policy(allowed_hosts=HOSTS),
                         Escalator(NoOperator(), SessionControl(), log), log, purpose="unattended")
     assert result.status == "success" and result.outputs["total"] == 32.39
 
@@ -97,7 +90,7 @@ def test_approval_creates_the_next_immutable_version_and_leaves_the_draft_alone(
 def test_digest_mismatch_is_rejected(tmp_path):
     path = draft(tmp_path)
     report_path = report(path)
-    other = tmp_path / "edited.v1.json"                                       # the same capability, one byte apart
+    other = tmp_path / "checkout_review.v1.json"                              # the same capability, one byte apart
     other.write_text(path.read_text().replace('"status": "draft"', '"status":  "draft"'))
     with pytest.raises(ApprovalError, match="stale or about another artifact"):
         approve(other, [report_path], "soroush")
@@ -168,16 +161,31 @@ def test_campaign_graphs_need_one_eligible_report_per_selector_assignment(tmp_pa
         approve(path, [link_report, foreign], "soroush")
 
     approved_path = approve(path, [link_report, url_report], "soroush")
-    approved = load_any_version(approved_path)
+    approved = load_artifact(approved_path)
     assert approved.status == "approved" and approved.version == 2     # always later than its source
+    assert approved_path.name == "checkout_paths.v2.json"
     assert approved.provenance["approval"]["tested_selector_assignments"] == [{"cart_route": "cart_link"},
                                                                               {"cart_route": "cart_url"}]
-    assert approved.provenance["scenarios"] == load_any_version(path).provenance["scenarios"]
+    assert approved.provenance["scenarios"] == load_artifact(path).provenance["scenarios"]
     for params in (LINK, URL):
         log = RunLog("replay", secrets=("secret_sauce",))
-        result = replay_any(approved, dict(params), Session(), Policy(allowed_hosts=HOSTS),
+        result = run_replay(approved, dict(params), Session(), Policy(allowed_hosts=HOSTS),
                             Escalator(NoOperator(), SessionControl(), log), log, purpose="unattended")
         assert result.status == "success"
+
+
+def test_a_draft_whose_file_name_disagrees_with_its_contents_is_refused(tmp_path, monkeypatch, capsys):
+    from src.cua.artifact import ArtifactError
+    path = save_artifact(checkout_artifact(), secrets=("secret_sauce",), path=tmp_path / "checkout_review.v3.json")
+    with pytest.raises(ArtifactError, match="holds checkout_review v1, not checkout_review v3"):
+        approve(path, [tmp_path / "any-report.json"], "soroush")
+    with pytest.raises(ArtifactError, match="holds checkout_review v1, not checkout_review v3"):
+        run_stability(path, dict(PARAMS), ["password"], 1, sessions(), HOSTS)
+    monkeypatch.setattr(main_module, "PlaywrightSurface", lambda **_: Session())
+    assert main(["approve", "--artifact", str(path), "--report", str(tmp_path / "r.json"), "--reviewer", "s"]) == 2
+    assert main(["stability", "--artifact", str(path), "--runs", "1", *ARGS]) == 2
+    out = capsys.readouterr().out
+    assert out.count("holds checkout_review v1, not checkout_review v3") == 2
 
 
 # ---------- reports are recomputed, not trusted ----------
@@ -254,8 +262,7 @@ def test_editing_run_records_without_the_totals_is_caught(tmp_path):
 # ---------- coverage comes from the graph ----------
 
 def saved(tmp_path, graph, name):
-    from src.cua.graph import save_graph
-    return save_graph(graph, secrets=("secret_sauce",), path=tmp_path / name)
+    return save_artifact(graph, secrets=("secret_sauce",), path=tmp_path / name)
 
 
 def test_stripping_provenance_does_not_lower_required_coverage(tmp_path):
@@ -266,7 +273,7 @@ def test_stripping_provenance_does_not_lower_required_coverage(tmp_path):
     with pytest.raises(ApprovalError, match=r"no stability report for selector assignment\(s\) "
                                             r"\[\{'cart_route': 'cart_url'\}\]"):
         approve(path, [link_report], "soroush")
-    approved = load_any_version(approve(path, [link_report, url_report], "soroush"))
+    approved = load_artifact(approve(path, [link_report, url_report], "soroush"))
     assert approved.provenance["approval"]["tested_selector_assignments"] == [{"cart_route": "cart_link"},
                                                                               {"cart_route": "cart_url"}]
 
@@ -310,7 +317,7 @@ def test_a_malformed_entry_gate_is_rejected(tmp_path):
     with pytest.raises(ApprovalError, match=r"do not cover exactly the selectors \['username', 'cart_route'\]"):
         approve(path, [report(path, LINK), report(path, URL)], "soroush")
 
-    linear = from_linear(checkout_artifact())
+    linear = checkout_artifact()
     linear.inputs["username"]["selector"] = True
     path = saved(tmp_path, linear, "nogate.json")
     with pytest.raises(ApprovalError, match="entry node 's1' is not a decision gate"):
@@ -322,38 +329,36 @@ def test_a_malformed_entry_gate_is_rejected(tmp_path):
 def run_direct(loaded, purpose, params=None):
     surface = Session()
     log = RunLog("replay", secrets=("secret_sauce",))
-    result = replay_any(loaded, dict(params or PARAMS), surface, Policy(allowed_hosts=HOSTS),
+    result = run_replay(loaded, dict(params or PARAMS), surface, Policy(allowed_hosts=HOSTS),
                         Escalator(NoOperator(), SessionControl(), log), log, purpose=purpose)
     return result, surface, log
 
 
-@pytest.mark.parametrize("schema", ["1.0", "2.0"])
-def test_replay_any_enforces_the_purpose(tmp_path, schema):
-    path = draft(tmp_path, schema)
-    loaded = load_any_version(path)
+def test_run_replay_enforces_the_purpose(tmp_path):
+    path = draft(tmp_path)
+    loaded = load_artifact(path)
     result, surface, log = run_direct(loaded, "unattended")
     assert result.status == "failure" and result.outcome_code == "artifact_not_approved"
     assert surface.actions == [] and '"replay_blocked"' in log.path.read_text()
     for purpose in ("supervised", "stability"):
         result, surface, _ = run_direct(loaded, purpose)
         assert result.status == "success" and surface.screen == "overview", purpose
-    approved = load_any_version(approve(path, [report(path)], "soroush"))
+    approved = load_artifact(approve(path, [report(path)], "soroush"))
     result, surface, _ = run_direct(approved, "unattended")
     assert result.status == "success" and surface.screen == "overview"
     with pytest.raises(ValueError, match="purpose must be one of"):
         run_direct(loaded, "production")
     with pytest.raises(TypeError):
-        replay_any(loaded, dict(PARAMS), Session(), Policy(allowed_hosts=HOSTS),
+        run_replay(loaded, dict(PARAMS), Session(), Policy(allowed_hosts=HOSTS),
                    Escalator(NoOperator(), SessionControl(), RunLog("replay")), RunLog("replay"))
 
 
 def test_stability_purpose_forces_deny(tmp_path):
-    from tests.test_stability import finish_step
-    finish = from_linear(checkout_artifact(extra_step=finish_step()))
+    finish = checkout_artifact(extra_node=finish_node())
     finish.success = {"text_contains": "Thank you"}
     surface = Session()
     log = RunLog("replay", secrets=("secret_sauce",))
-    result = replay_any(finish, dict(PARAMS), surface, Policy(allowed_hosts=HOSTS),
+    result = run_replay(finish, dict(PARAMS), surface, Policy(allowed_hosts=HOSTS),
                         Escalator(NoOperator(), SessionControl(), log), log, purpose="stability",
                         irreversible_policy="allow")
     assert result.outcome_code == "irreversible_denied" and ("click", "Finish", "") not in surface.actions
@@ -363,7 +368,7 @@ def test_stability_purpose_forces_deny(tmp_path):
 
 def test_persisted_result_is_redacted_but_the_caller_keeps_the_real_one(tmp_path):
     path = draft(tmp_path)
-    loaded = load_any_version(path)
+    loaded = load_artifact(path)
     result = ReplayResult(status="failure", outputs={"total": 32.39, "note": "typed secret_sauce"},
                           outcome_code="checkpoint_not_met", step_id="s4", expected="text secret_sauce gone",
                           observed="screen shows secret_sauce", recoveries=["s1: typed secret_sauce again"],
@@ -406,11 +411,10 @@ def bundles():
     return sorted(evidence_module.EVIDENCE_DIR.glob("replay-*"))
 
 
-@pytest.mark.parametrize("schema", ["1.0", "2.0"])
-def test_unattended_draft_replay_is_blocked_before_any_surface_exists(monkeypatch, tmp_path, capsys, schema):
+def test_unattended_draft_replay_is_blocked_before_any_surface_exists(monkeypatch, tmp_path, capsys):
     created = []
     monkeypatch.setattr(main_module, "PlaywrightSurface", lambda **_: created.append(Session()) or created[-1])
-    path = draft(tmp_path, schema)
+    path = draft(tmp_path)
     assert main(["replay", "--artifact", str(path), "--operator", "none", *ARGS]) == 2
     out = capsys.readouterr().out
     assert "Refusing unattended replay" in out and '"outcome_code": "artifact_not_approved"' in out
@@ -422,7 +426,7 @@ def test_unattended_draft_replay_is_blocked_before_any_surface_exists(monkeypatc
     assert "--operator console" in result["observed"]
     manifest = json.loads((bundle / "manifest.json").read_text())
     assert manifest == {**manifest, "artifact_path": str(path), "artifact_file": path.name, "sha256": sha256_of(path),
-                        "capability": "checkout_review", "capability_version": 1, "schema_version": schema,
+                        "capability": "checkout_review", "capability_version": 1, "schema_version": "2.0",
                         "status": "draft", "result_status": "failure", "outcome_code": "artifact_not_approved",
                         "param_names": sorted(PARAMS), "sensitive_params": ["password"]}
     assert "secret_sauce" not in (bundle / "manifest.json").read_text() and "standard_user" not in json.dumps(manifest)
@@ -430,11 +434,10 @@ def test_unattended_draft_replay_is_blocked_before_any_surface_exists(monkeypatc
     assert '"replay_blocked"' in (bundle / "run.jsonl").read_text()
 
 
-@pytest.mark.parametrize("schema", ["1.0", "2.0"])
-def test_supervised_draft_replay_runs_with_a_warning(monkeypatch, tmp_path, capsys, schema):
+def test_supervised_draft_replay_runs_with_a_warning(monkeypatch, tmp_path, capsys):
     created = []
     monkeypatch.setattr(main_module, "PlaywrightSurface", lambda **_: created.append(Session()) or created[-1])
-    path = draft(tmp_path, schema)
+    path = draft(tmp_path)
     assert main(["replay", "--artifact", str(path), "--operator", "console", *ARGS]) == 0
     out = capsys.readouterr().out
     assert "WARNING: checkout_review v1 has status 'draft'" in out and '"status": "success"' in out
@@ -444,11 +447,10 @@ def test_supervised_draft_replay_runs_with_a_warning(monkeypatch, tmp_path, caps
     assert json.loads((bundle / "manifest.json").read_text())["status"] == "draft"
 
 
-@pytest.mark.parametrize("schema", ["1.0", "2.0"])
-def test_approved_artifact_replays_unattended(monkeypatch, tmp_path, capsys, schema):
+def test_approved_artifact_replays_unattended(monkeypatch, tmp_path, capsys):
     created = []
     monkeypatch.setattr(main_module, "PlaywrightSurface", lambda **_: created.append(Session()) or created[-1])
-    path = draft(tmp_path, schema)
+    path = draft(tmp_path)
     approved_path = approve(path, [report(path)], "soroush")
     assert main(["replay", "--artifact", str(approved_path), "--operator", "none", *ARGS]) == 0
     out = capsys.readouterr().out

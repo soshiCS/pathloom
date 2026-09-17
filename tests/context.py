@@ -1,17 +1,19 @@
 """Shared test wiring: imports from the package under test plus small builders."""
 from __future__ import annotations
 
-from src.cua.artifact import build
+from src.cua.artifact import build_linear, classify_effect, classify_retry_safety, linear_path
 from src.cua.escalation import Escalator, SessionControl
 from src.cua.evidence import RunLog
 from src.cua.models import (Action, Artifact, Element, GraphAction, GraphEdge, GraphNode, Guard,
-                            InterventionRequest, InterventionResult, Locator, Observation, Step, TransientError)
+                            InterventionRequest, InterventionResult, Locator, Observation, TransientError)
 from src.cua.policy import Policy
 
 __all__ = ["Action", "Artifact", "Element", "GraphAction", "GraphEdge", "GraphNode", "Guard", "InterventionRequest",
-           "InterventionResult", "Locator", "Observation", "Step", "TransientError", "Policy", "Escalator",
-           "SessionControl", "RunLog", "build", "checkout_artifact", "ladder", "text_ladder", "RecordingOperator",
-           "action_node", "decision_node", "terminal_node", "edge", "HOSTS", "ENTRY", "PARAMS"]
+           "InterventionResult", "Locator", "Observation", "TransientError", "Policy", "Escalator",
+           "SessionControl", "RunLog", "build_linear", "linear_path", "checkout_artifact", "checkout_nodes",
+           "ladder", "text_ladder", "linear_node", "navigate_node", "type_node", "click_node", "extract_node",
+           "finish_node", "RecordingOperator", "action_node", "decision_node", "terminal_node", "edge", "HOSTS",
+           "ENTRY", "PARAMS"]
 
 ENTRY = "https://www.saucedemo.com/"
 HOSTS = ["www.saucedemo.com"]
@@ -30,36 +32,65 @@ def text_ladder(prefix: str) -> Locator:
     return Locator(strategies=[{"kind": "text", "text": prefix}])
 
 
-def type_step(step_id: str, field: str, param: str) -> Step:
-    return Step(id=step_id, action="type", target=ladder("textbox", field), value="{{" + param + "}}")
+# ---------- action nodes as discovery classifies them ----------
+
+def linear_node(node_id: str, act: GraphAction, risky: bool = False) -> GraphNode:
+    """An action node with the effect and retry safety discovery would assign."""
+    effect = classify_effect(act.action, risky)
+    return GraphNode(id=node_id, kind="action", action=act, effect=effect,
+                     retry_safety=classify_retry_safety(act.action, effect, act.checkpoint))
 
 
-def click_step(step_id: str, name: str, expect: str, context: str | None = None, risk: str = "safe") -> Step:
-    return Step(id=step_id, action="click", target=ladder("button", name, context),
-                checkpoint={"text_contains": expect}, risk=risk)
+def navigate_node(node_id: str, url: str, expect: str | None = None) -> GraphNode:
+    checkpoint = {"text_contains": expect} if expect else None
+    return linear_node(node_id, GraphAction(action="navigate", target=None, value=url, checkpoint=checkpoint))
 
 
-def checkout_artifact(extra_step: Step | None = None) -> Artifact:
-    """The artifact discovery produces for the checkout-review capability, built by hand for tests."""
-    steps = [
-        Step(id="s1", action="navigate", target=None, value=ENTRY, checkpoint={"text_contains": "Swag Labs"}),
-        type_step("s2", "Username", "username"),
-        type_step("s3", "Password", "password"),
-        click_step("s4", "Login", "Products"),
-        click_step("s5", "Add to cart", "Remove", context="{{product_name}}"),
-        Step(id="s6", action="click", target=ladder("link", "cart"), checkpoint={"text_contains": "{{product_name}}"}),
-        click_step("s7", "Checkout", "Checkout: Your Information"),
-        type_step("s8", "First Name", "first_name"),
-        type_step("s9", "Last Name", "last_name"),
-        type_step("s10", "Zip/Postal Code", "postal_code"),
-        click_step("s11", "Continue", "Checkout: Overview"),
-        Step(id="s12", action="extract", target=ladder("link", "View details for {{product_name}}"), value="product_name"),
-        Step(id="s13", action="extract", target=text_ladder("Item total:"), value="subtotal"),
-        Step(id="s14", action="extract", target=text_ladder("Tax:"), value="tax"),
-        Step(id="s15", action="extract", target=text_ladder("Total:"), value="total"),
+def type_node(node_id: str, field: str, param: str) -> GraphNode:
+    return linear_node(node_id, GraphAction(action="type", target=ladder("textbox", field), value="{{" + param + "}}"))
+
+
+def click_node(node_id: str, name: str, expect: str | None, context: str | None = None, risky: bool = False,
+               role: str = "button") -> GraphNode:
+    checkpoint = {"text_contains": expect} if expect else None
+    return linear_node(node_id, GraphAction(action="click", target=ladder(role, name, context), checkpoint=checkpoint),
+                       risky=risky)
+
+
+def extract_node(node_id: str, target: Locator, output: str) -> GraphNode:
+    return linear_node(node_id, GraphAction(action="extract", target=target, value=output))
+
+
+def finish_node(node_id: str = "s16") -> GraphNode:
+    """The one click that places the order: the policy calls it risky, so it is irreversible and never retried."""
+    return click_node(node_id, "Finish", "Thank you", risky=True)
+
+
+def checkout_nodes() -> list[GraphNode]:
+    return [
+        navigate_node("s1", ENTRY, "Swag Labs"),
+        type_node("s2", "Username", "username"),
+        type_node("s3", "Password", "password"),
+        click_node("s4", "Login", "Products"),
+        click_node("s5", "Add to cart", "Remove", context="{{product_name}}"),
+        click_node("s6", "cart", "{{product_name}}", role="link"),
+        click_node("s7", "Checkout", "Checkout: Your Information"),
+        type_node("s8", "First Name", "first_name"),
+        type_node("s9", "Last Name", "last_name"),
+        type_node("s10", "Zip/Postal Code", "postal_code"),
+        click_node("s11", "Continue", "Checkout: Overview"),
+        extract_node("s12", ladder("link", "View details for {{product_name}}"), "product_name"),
+        extract_node("s13", text_ladder("Item total:"), "subtotal"),
+        extract_node("s14", text_ladder("Tax:"), "tax"),
+        extract_node("s15", text_ladder("Total:"), "total"),
     ]
-    if extra_step is not None:
-        steps.append(extra_step)
+
+
+def checkout_artifact(extra_node: GraphNode | None = None) -> Artifact:
+    """The linear graph discovery produces for the checkout-review capability, built by hand for tests."""
+    nodes = checkout_nodes()
+    if extra_node is not None:
+        nodes.append(extra_node)
     money = r"\$\s*([\d.]+)"
     outputs = {
         "product_name": {"type": "string", "required": True, "pattern": r"(.+)"},
@@ -67,10 +98,10 @@ def checkout_artifact(extra_step: Step | None = None) -> Artifact:
         "tax": {"type": "number", "required": True, "pattern": money},
         "total": {"type": "number", "required": True, "pattern": money},
     }
-    return build(
+    return build_linear(
         name="checkout_review", goal="add a product and read the checkout overview",
         surface_meta={"kind": "web", "app": "Swag Labs", "entry_url": ENTRY, "allowed_hosts": HOSTS},
-        params=PARAMS, sensitive={"password"}, steps=steps, outputs=outputs,
+        params=PARAMS, sensitive={"password"}, nodes=nodes, outputs=outputs,
         outcomes=[
             {"code": "dismiss_cookie_notice", "kind": "recoverable", "source": "observed",
              "detect": {"dialog_contains": "We use cookies"},

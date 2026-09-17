@@ -11,9 +11,9 @@ import json
 import pytest
 
 from src.cua.campaign import load_spec, run_campaign
+from src.cua.artifact import outgoing
 from src.cua.escalation import NoOperator
-from src.cua.graph import outgoing
-from src.cua.lifecycle import replay_any
+from src.cua.lifecycle import run_replay
 from src.cua.policy import Policy
 from tests.context import Escalator, RecordingOperator, RunLog, SessionControl
 from tests.scripted_planner import ScriptedPlanner, ScriptedStep
@@ -142,7 +142,7 @@ def replay(app, chromium, graph, params, mode="normal", operator=None, irreversi
     surface = chromium(headless=True, secrets=("training_only",))
     log = RunLog("replay", secrets=("training_only",))
     try:
-        result = replay_any(graph, dict(params), surface, Policy(allowed_hosts=HOSTS),
+        result = run_replay(graph, dict(params), surface, Policy(allowed_hosts=HOSTS),
                             Escalator(operator or NoOperator(), SessionControl(), log), log, purpose="supervised",
                             irreversible_policy=irreversible)
     finally:

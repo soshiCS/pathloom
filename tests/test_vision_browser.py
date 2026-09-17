@@ -10,9 +10,9 @@ import pytest
 
 from src.cua import agent as agent_module
 from src.cua.agent import DiscoveryFailed, discover
-from src.cua.artifact import save
+from src.cua.artifact import save_artifact
 from src.cua.escalation import NoOperator
-from src.cua.lifecycle import load_any_version, replay_any
+from src.cua.lifecycle import load_artifact, run_replay
 from src.cua.policy import Policy
 from tests.context import Escalator, RunLog, SessionControl
 from tests.scripted_planner import ScriptedStep, ScriptedVisionPlanner, visual_click
@@ -113,9 +113,9 @@ def test_canvas_control_is_discovered_by_vision_and_replayed_without_a_planner(s
     assert seen_at_capture["text"].count("••••••") == 1 and SECRET not in seen_at_capture["text"]
     assert len(planner.frames) == 1 and planner.frames[0].png[:8] == b"\x89PNG\r\n\x1a\n"
     assert planner.frames[0].width > 0 and planner.frames[0].path.endswith("-vision-attempt-1.png")
-    step = artifact.steps[1]
-    assert step.action == "click" and step.checkpoint == {"text_contains": "Session started"}
-    [coords] = step.target.strategies                                                        # exact coordinates only
+    node = artifact.nodes[1]
+    assert node.action.action == "click" and node.action.checkpoint == {"text_contains": "Session started"}
+    [coords] = node.action.target.strategies                                                 # exact coordinates only
     assert coords == {"kind": "coords", "x": box[0] + box[2] // 2, "y": box[1] + box[3] // 2, "exact": True,
                       "viewport": {"width": planner.frames[0].width, "height": planner.frames[0].height},
                       "scroll": {"x": 0, "y": 0}}
@@ -125,12 +125,12 @@ def test_canvas_control_is_discovered_by_vision_and_replayed_without_a_planner(s
     assert SECRET not in text and "base64" not in text
     assert '"vision_action_verified"' in text and '"verified": true' in text
 
-    path = save(artifact, secrets=(SECRET,))
-    loaded = load_any_version(path)                        # a plain schema 1.0 artifact
+    path = save_artifact(artifact, secrets=(SECRET,))
+    loaded = load_artifact(path)                           # a plain linear capability graph
     replay_surface = chromium(headless=True, secrets=(SECRET,))
     replay_log = RunLog("replay", secrets=(SECRET,))
     try:
-        result = replay_any(loaded, {}, replay_surface, Policy(allowed_hosts=["127.0.0.1"]),
+        result = run_replay(loaded, {}, replay_surface, Policy(allowed_hosts=["127.0.0.1"]),
                             Escalator(NoOperator(), SessionControl(), replay_log), replay_log, purpose="supervised")
     finally:
         replay_surface.close()
@@ -163,7 +163,7 @@ def test_replay_refuses_the_coordinates_in_a_different_viewport(site, chromium):
     other._page.set_viewport_size({"width": 1000, "height": 500})
     replay_log = RunLog("replay")
     try:
-        result = replay_any(artifact, {}, other, Policy(allowed_hosts=["127.0.0.1"]),
+        result = run_replay(artifact, {}, other, Policy(allowed_hosts=["127.0.0.1"]),
                             Escalator(NoOperator(), SessionControl(), replay_log), replay_log, purpose="supervised")
         clicked = other._page.evaluate("() => document.getElementById('out').textContent")
     finally:
@@ -201,7 +201,7 @@ def test_exact_coordinates_resolve_only_in_the_recorded_viewport_and_scroll_posi
         surface._page.evaluate("() => window.scrollTo(0, 0)")
         surface._page.set_viewport_size({"width": width - 100, "height": height})
         assert surface.resolve(Locator(strategies=[rung])) is None                           # other viewport: refused
-        legacy = {"kind": "coords", "x": 200, "y": 100}                                      # old artifacts unchanged
-        assert surface.resolve(Locator(strategies=[legacy])) is not None
+        plain = {"kind": "coords", "x": 200, "y": 100}                     # no viewport binding: resolves anywhere
+        assert surface.resolve(Locator(strategies=[plain])) is not None
     finally:
         surface.close()

@@ -1,9 +1,9 @@
-"""Conservative merge of verified linear traces into one capability graph: a prefix tree.
+"""Conservative merge of verified linear graphs into one capability graph: a prefix tree.
 
-Each scenario's discovery run recorded a linear artifact. Traces are merged by walking them
-in specification order and sharing an action node only while the *complete* normalized
-meaning of the step matches (action kind, parameterized value, locator ladder, checkpoint,
-effect, retry safety; step ids are ignored because every run numbers its own). At the first
+Each scenario's discovery run recorded a linear graph. Traces are merged by walking their
+action nodes in specification order and sharing a node only while the *complete* normalized
+meaning of the node matches (action kind, parameterized value, locator ladder, checkpoint,
+effect, retry safety; node ids are ignored because every run numbers its own). At the first
 difference a decision node is inserted and each branch is guarded by the complete selector
 assignment of the scenarios that took it. Merging continues inside each branch. Nothing is
 merged after paths diverge: a common suffix stays duplicated, because two screens reached by
@@ -11,19 +11,18 @@ different routes are not assumed to be the same state. A scenario that ends wher
 continues becomes a guarded edge to the success terminal next to the continuing action.
 Scenarios with identical complete traces share one path; provenance names them all. When the
 campaign declares selectors, the graph starts with a decision node that admits only the declared
-selector assignments, so an undeclared combination stops before any action runs.
+selector assignments, so an undeclared combination stops before any action runs. A merged node
+keeps its source node's effect and retry safety exactly.
 """
 from __future__ import annotations
 
 import copy
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
-from .artifact import ArtifactError
-from .graph import (GRAPH_SCHEMA_VERSION, SUCCESS_NODE_ID, action_node, linear_effect, linear_retry_safety,
-                    validate_graph)
-from .models import ArtifactV2, GraphEdge, GraphNode, Guard, ScenarioTrace, Step
+from .artifact import SCHEMA_VERSION, SUCCESS_NODE_ID, ArtifactError, copy_node, linear_path, validate
+from .models import Artifact, GraphEdge, GraphNode, Guard, ScenarioTrace
 
 MERGE_STRATEGY = "prefix_tree"
 COMPATIBILITY_FIELDS = ("name", "description", "surface.kind", "surface.entry_url", "surface.allowed_hosts", "success")
@@ -36,32 +35,41 @@ class MergeError(ArtifactError):
 
 @dataclass
 class TreeNode:
-    """One shared step in the prefix tree, and which scenarios pass through or stop here."""
+    """One shared action in the prefix tree, and which scenarios pass through or stop here."""
     key: str
-    step: Step | None
+    node: GraphNode | None
     scenarios: list[str] = field(default_factory=list)
     ends: list[str] = field(default_factory=list)
     children: list[TreeNode] = field(default_factory=list)
 
 
-def merge_traces(traces: list[ScenarioTrace], selectors: list[str], campaign_id: str, version: int = 1) -> ArtifactV2:
+def merge_traces(traces: list[ScenarioTrace], selectors: list[str], campaign_id: str, version: int = 1) -> Artifact:
     """Merge the traces, in the given order, into a validated draft graph with campaign provenance."""
     if not traces:
         raise MergeError("nothing to merge: no successful traces")
     check_compatible(traces)
+    paths = {trace.scenario.name: trace_path(trace) for trace in traces}
     first = traces[0].artifact
     builder = GraphBuilder(traces, selectors)
-    entry = builder.emit(build_tree(traces), source=None)
+    entry = builder.emit(build_tree(traces, paths), source=None)
     builder.nodes.append(builder.success)   # the one terminal, listed last for readability
-    graph = ArtifactV2(
-        schema_version=GRAPH_SCHEMA_VERSION, name=first.name, version=version, status="draft",
+    graph = Artifact(
+        schema_version=SCHEMA_VERSION, name=first.name, version=version, status="draft",
         description=first.description, surface=copy.deepcopy(first.surface),
         inputs=merge_inputs(traces, selectors), outputs=copy.deepcopy(first.outputs),
         entry_node=entry, nodes=builder.nodes, edges=builder.sorted_edges(), outcomes=merge_outcomes(traces),
-        success=copy.deepcopy(first.success), provenance=provenance(traces, selectors, campaign_id, builder),
+        success=copy.deepcopy(first.success), provenance=provenance(traces, selectors, campaign_id, builder, paths),
     )
-    validate_graph(graph)
+    validate(graph)
     return graph
+
+
+def trace_path(trace: ScenarioTrace) -> list[GraphNode]:
+    """The action nodes a scenario recorded, in order; a trace must be a linear graph."""
+    try:
+        return linear_path(trace.artifact)
+    except ArtifactError as error:
+        raise MergeError(f"scenario {trace.scenario.name!r} did not record a linear graph: {error}") from error
 
 
 # ---------- compatibility ----------
@@ -156,27 +164,26 @@ def unique(clauses: list[dict]) -> list[dict]:
 
 # ---------- prefix tree ----------
 
-def step_key(step: Step) -> str:
-    """The complete execution meaning of a step, without its id."""
-    return json.dumps({"action": step.action, "value": step.value,
-                       "target": step.target.strategies if step.target else None, "checkpoint": step.checkpoint,
-                       "effect": linear_effect(step), "retry_safety": linear_retry_safety(step)}, sort_keys=True)
+def node_key(node: GraphNode) -> str:
+    """The complete execution meaning of an action node, without its id."""
+    return json.dumps({"action": asdict(node.action), "effect": node.effect, "retry_safety": node.retry_safety},
+                      sort_keys=True)
 
 
-def build_tree(traces: list[ScenarioTrace]) -> TreeNode:
-    root = TreeNode(key="", step=None)
+def build_tree(traces: list[ScenarioTrace], paths: dict[str, list[GraphNode]]) -> TreeNode:
+    root = TreeNode(key="", node=None)
     for trace in traces:
-        node = root
-        node.scenarios.append(trace.scenario.name)
-        for step in trace.artifact.steps:
-            key = step_key(step)
-            child = next((c for c in node.children if c.key == key), None)
+        tree = root
+        tree.scenarios.append(trace.scenario.name)
+        for node in paths[trace.scenario.name]:
+            key = node_key(node)
+            child = next((c for c in tree.children if c.key == key), None)
             if child is None:
-                child = TreeNode(key=key, step=copy.deepcopy(step))
-                node.children.append(child)
+                child = TreeNode(key=key, node=copy.deepcopy(node))
+                tree.children.append(child)
             child.scenarios.append(trace.scenario.name)
-            node = child
-        node.ends.append(trace.scenario.name)
+            tree = child
+        tree.ends.append(trace.scenario.name)
     return root
 
 
@@ -224,8 +231,7 @@ class GraphBuilder:
 
     def emit_action(self, tree: TreeNode) -> str:
         self.actions += 1
-        node = action_node(tree.step)
-        node.id = f"s{self.actions}"
+        node = copy_node(tree.node, f"s{self.actions}")   # effect and retry safety travel unchanged
         self.nodes.append(node)
         for name in tree.scenarios:
             self.paths[name].append(node.id)
@@ -257,13 +263,15 @@ class GraphBuilder:
 
 # ---------- provenance ----------
 
-def provenance(traces: list[ScenarioTrace], selectors: list[str], campaign_id: str, builder: GraphBuilder) -> dict:
+def provenance(traces: list[ScenarioTrace], selectors: list[str], campaign_id: str, builder: GraphBuilder,
+               paths: dict[str, list[GraphNode]]) -> dict:
     scenarios = []
     for trace in traces:
         origin = trace.artifact.provenance
         scenarios.append({"name": trace.scenario.name, "selectors": builder.assignment[trace.scenario.name],
                           "run_id": trace.run_id, "planner": trace.planner, "recorded_at": origin.get("recorded_at"),
-                          "step_count": len(trace.artifact.steps), "interventions": origin.get("interventions", 0),
+                          "action_count": len(paths[trace.scenario.name]),
+                          "interventions": origin.get("interventions", 0),
                           "node_path": list(builder.paths[trace.scenario.name]), "verified": True})
     return {
         "campaign_id": campaign_id,

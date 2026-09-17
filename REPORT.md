@@ -17,9 +17,10 @@ computed states merged from Chromium's accessibility tree (the projection keeps 
 geometry; the tree adds states, upgrades generic text that is really a control, and adds
 controls the projection missed; nodes are matched by a shared structural path in two protocol
 calls, and the observation degrades to the projection if the tree cannot be read). What gets recorded is the
-reusable flow, never the transcript: each performed action becomes a step with a locator ladder
-and a checkpoint that was actually seen, inputs become `{{placeholders}}`, and outcomes the
-model saw or declared are kept with their source.
+reusable flow, never the transcript: each performed action becomes an action node with a locator
+ladder, a checkpoint that was actually seen, an effect and a retry policy; inputs become
+`{{placeholders}}`; outcomes the model saw or declared are kept with their source. A single
+discovery therefore records a linear capability graph, and a campaign merges such graphs.
 
 A campaign runs one such discovery per declared scenario on a fresh session and merges the
 verified traces by a prefix tree into a graph: shared identical prefixes, a decision node where
@@ -30,17 +31,24 @@ The lifecycle around it is `draft -> stability -> approve -> approved -> unatten
 Key trade-offs: text checkpoints are simple and surface-agnostic but coarse, so classification
 order carries the weight (Section 3); the prefix tree never guesses that two screens reached by
 different routes are the same, at the cost of duplicated suffixes (a live graph has 28 action
-nodes for 37 recorded steps); and the model is asked only for one action at a time with no
+nodes for 37 recorded actions); and the model is asked only for one action at a time with no
 transcript, which keeps artifacts provider-independent but makes discovery slower.
 
 ## 2. Artifact schema
 
-Schema 1.0 is a linear list of steps. Schema 2.0, produced by campaigns, replaces it with
-`entry_node`, `nodes` and `edges` while keeping the same contract fields: `inputs` (typed,
-`sensitive`, and for graphs `selector` and `required_when` conditions), `outputs` (type,
-requiredness and the regex that reads each value), declared `outcomes`, a `success` checkpoint
-and `provenance`. An action node carries what a step does plus an `effect` (`none`, `reversible`,
-`irreversible`, `unknown`) and a `retry_safety`; decision nodes branch on typed guards
+The artifact is a capability graph (`schema_version: "2.0"`; the `N` in `name.vN.json` is the
+capability revision). An artifact carries
+the contract fields, `inputs` (typed, `sensitive`, `selector` and `required_when` conditions),
+`outputs` (type, requiredness and the regex that reads each value), declared `outcomes`, a
+`success` checkpoint and `provenance`, and the flow as `entry_node`, `nodes` and `edges`. A
+single discovery emits a linear graph (action nodes joined by `always` edges into the `success`
+terminal); a campaign merges linear graphs into a branching one. An action node carries what it
+does plus an `effect` (`none`, `reversible`, `irreversible`, `unknown`) and a `retry_safety`,
+both assigned at discovery from fixed rules (navigation and extraction have no effect; an allowed
+click or type is reversible; a control the policy calls risky is irreversible; anything
+unclassifiable is unknown; extraction and plain navigation are safe to repeat, a checkpointed
+reversible action is verified before a retry, a blind click or type and every irreversible or
+unknown action are never retried); decision nodes branch on typed guards
 (`input_equals`, `text_visible`, `url_matches`, `element_present`, `dialog_contains`, `always`
 as the fallback); terminal nodes end as `success`, `business_outcome` or `failure`. Locators are
 ladders, most stable first, and are parameterized like values; a parameterized ladder never
@@ -55,12 +63,12 @@ SHA-256 and the digests of the three stability reports. It never holds a secret 
 ## 3. Determinism & error handling
 
 Replay resolves targets from the ladder, substitutes parameters, and never asks anything to
-choose; the engines, the stability command and approval import no planner or provider SDK, which
+choose; the engine, the stability command and approval import no planner or provider SDK, which
 a subprocess test proves. Waiting is bounded polling against perception, never fixed sleeps.
 After an action, classification runs in a fixed order: checkpoint met wins; a screen that has
 not changed is still loading; a declared business outcome on a changed screen ends the run
-with its code; a step without a checkpoint hands the screen to its edges; a timeout escalates.
-Absence outcomes ("the product is not listed") are judged only by the step that looks for the
+with its code; a node without a checkpoint hands the screen to its edges; a timeout escalates.
+Absence outcomes ("the product is not listed") are judged only by the node that looks for the
 item. Nine live replays of the three paths agreed with each other and with discovery to the cent.
 
 Transient loads are retried with backoff and a reload, but each graph node's `retry_safety`
@@ -68,8 +76,11 @@ decides whether an action that may already have happened is repeated: `safe` rep
 `verify_before_retry` re-checks the checkpoint first and asks a person when it cannot tell,
 `never_retry` never repeats. Known dialogs are cleared by declared recoveries; unknown ones go to
 a person. The result contract is `success` with typed outputs, `business_outcome` with a stable
-code, or `failure` with the node, what was expected and what was observed. Recoveries and
-locator fallbacks are counted and reported by stability runs rather than hidden.
+code, or `failure` with the node, what was expected and what was observed, plus two traces:
+`executed_path`, the action nodes completed once each in order (what reuse may import), and
+`performed_attempts`, every physical action attempted including repeats (diagnostic only; a
+restart clears the path but not the count). Recoveries and locator fallbacks are counted and
+reported by stability runs rather than hidden.
 
 ## 4. Heterogeneity & multi-tenant
 
@@ -95,14 +106,21 @@ discovery never visits still classify deterministically. No live model run again
 made yet; the suite drives it through the real browser adapter with a scripted planner.
 
 Accessibility support is Chromium-specific and confined to the adapter; the seam, the artifact
-and both engines are unchanged. For controls neither source can expose (a canvas, an unnamed
+and the engine are unchanged. For controls neither source can expose (a canvas, an unnamed
 icon) discovery has an opt-in, bounded screenshot fallback: after the planner is stuck, one
 masked viewport screenshot goes to the provider, which may propose exactly one click or type
 with a bounding box and an expected text; the proposal is validated, policy-checked, performed
 once and kept only if structured perception verifies it, with a small per-run budget and one
-attempt per unchanged screen. The recorded step keeps a coordinate rung bound to its viewport;
+attempt per unchanged screen. The recorded node keeps a coordinate rung bound to its viewport;
 replay never uses a model, uses the coordinates last, and refuses them in another viewport.
-Visual extraction is unsupported by design.
+Visual extraction is unsupported by design. A discovery may also open with an approved
+capability that performs its beginning: the prefix is preflighted (approved, digest, inputs,
+hosts, no irreversible action) before a browser exists, replayed on the live session with no
+model under a purpose that forces irreversible actions to be denied, and on success its executed
+path, taken from the engine's structured trace, becomes the opening nodes of the new
+self-contained artifact, each copied exactly with its effect and retry policy; on any failure,
+including a path that cannot be imported, the session is closed and discovery starts afresh.
+This is verified prefix reuse, never a cache of isolated clicks.
 
 Multi-tenant reuse is a layering the schema is shaped for but does not implement: a base
 artifact per vendor product, per-tenant `entry_url` and `allowed_hosts`, overlays for individual
@@ -131,7 +149,7 @@ override them. Risk is layered: the policy's name-based classification of irreve
 (`Finish`, `Pay`, `Delete`, ...), the node's declared `effect`, and the run's
 `--irreversible-policy` (`deny`, `confirm`, `allow`); `unknown` always needs a person, a
 conflict between the policy and the graph resolves to the stricter view, and stability runs always
-use `deny`, so an irreversible step fails safely and stays ineligible. Sensitive inputs reach
+use `deny`, so an irreversible node fails safely and stays ineligible. Sensitive inputs reach
 neither the model nor disk. Unattended replay requires an approved artifact, a draft is refused
 before a browser exists, and every bundle carries the exact artifact, a redacted result and a
 manifest with its digest. Approval recomputes a report's eligibility from its run records and
@@ -145,7 +163,7 @@ Deliberate: no cryptographic report signing (approval is a local review record; 
 rewritten report would pass); no authenticated web operator console (a terminal); no per-tenant
 runtime infrastructure; no unrestricted LLM fallback during replay; no repeated testing of real
 irreversible commits (stability targets prepare-only flows, which is why every workflow here
-stops before `Finish`); one implemented browser surface; the low-level replay engines stay
-internal components behind the lifecycle boundary. Also not done: locator normalization in the
+stops before `Finish`); one implemented browser surface; the replay engine stays an internal
+component behind the lifecycle boundary. Also not done: locator normalization in the
 merge key (a coordinate rung that differs between runs would prevent sharing), nested artifacts,
 and guard minimization (guards carry the complete selector assignment on purpose).

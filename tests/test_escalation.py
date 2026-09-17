@@ -6,7 +6,7 @@ import pytest
 from src.cua.escalation import AUTOMATION, HUMAN, ConsoleOperator
 from src.cua.replay import replay
 from tests.context import (HOSTS, PARAMS, Escalator, InterventionRequest, InterventionResult, Policy,
-                           RecordingOperator, RunLog, SessionControl, checkout_artifact)
+                           RecordingOperator, RunLog, SessionControl, checkout_artifact, finish_node)
 from tests.fake_surface import ENTRY, FakeSurface
 
 
@@ -104,34 +104,20 @@ def test_replay_resume_rechecks_the_step_before_redoing_it():
 # ---------- intervention context ----------
 
 def test_replay_handoffs_carry_the_capability_goal():
-    from src.cua.graph import from_linear
-    from src.cua.graph_replay import replay_graph
-    from tests.context import Step, ladder
-
     goal = checkout_artifact().description
     stuck = RecordingOperator(disposition="abort")
     log = RunLog("replay")
     replay(checkout_artifact(), PARAMS, FakeSurface(faults=["verification"]), Policy(allowed_hosts=HOSTS),
            Escalator(stuck, SessionControl(), log), log)
     assert stuck.requests[0].goal == goal and stuck.requests[0].capability == "checkout_review"
+    assert stuck.requests[0].kind == "stuck"
 
-    finish = Step(id="s16", action="click", target=ladder("button", "Finish"),
-                  checkpoint={"text_contains": "Thank you"}, risk="risky")
     confirm = RecordingOperator(disposition="deny")
     log = RunLog("replay")
-    replay(checkout_artifact(extra_step=finish), PARAMS, FakeSurface(), Policy(allowed_hosts=HOSTS),
-           Escalator(confirm, SessionControl(), log), log)
+    result = replay(checkout_artifact(extra_node=finish_node()), PARAMS, FakeSurface(), Policy(allowed_hosts=HOSTS),
+                    Escalator(confirm, SessionControl(), log), log)
     assert confirm.requests[0].kind == "confirm" and confirm.requests[0].goal == goal
-
-    graph_stuck, graph_confirm = RecordingOperator(disposition="abort"), RecordingOperator(disposition="deny")
-    log = RunLog("replay")
-    replay_graph(from_linear(checkout_artifact()), PARAMS, FakeSurface(faults=["verification"]),
-                 Policy(allowed_hosts=HOSTS), Escalator(graph_stuck, SessionControl(), log), log)
-    log = RunLog("replay")
-    replay_graph(from_linear(checkout_artifact(extra_step=finish)), PARAMS, FakeSurface(),
-                 Policy(allowed_hosts=HOSTS), Escalator(graph_confirm, SessionControl(), log), log)
-    assert graph_stuck.requests[0].goal == goal and graph_confirm.requests[0].goal == goal
-    assert graph_confirm.requests[0].kind == "confirm"
+    assert result.outcome_code == "irreversible_not_confirmed"
     assert '"goal": "add a product and read the checkout overview"' in log.path.read_text()
 
 

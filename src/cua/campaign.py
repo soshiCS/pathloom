@@ -19,19 +19,19 @@ from pathlib import Path
 from typing import Callable
 
 from . import artifact as artifact_module
-from .agent import DEFAULT_MAX_STEPS, DEFAULT_MAX_VISION_ATTEMPTS, DiscoveryFailed, discover
-from .artifact import ArtifactError, validate_outcome
+from .agent import DEFAULT_MAX_STEPS, DEFAULT_MAX_VISION_ATTEMPTS, DiscoveryFailed
+from .artifact import ArtifactError, linear_path, save_artifact, validate_outcome
 from .escalation import Escalator, Operator, SessionControl
 from .evidence import RunLog
-from .graph import save_graph
 from .merge import MergeError, merge_traces
-from .models import CampaignResult, CampaignSpec, Scenario, ScenarioTrace
+from .models import CampaignResult, CampaignSpec, ReusePlan, Scenario, ScenarioTrace
 from .planner import Planner
 from .policy import Policy, redact
+from .reuse import ReuseError, discover_with_reuse, resolve_reuse
 from .surface import Surface
 
 SPEC_KEYS = {"name", "goal", "url", "selectors", "scenarios"}
-OPTIONAL_SPEC_KEYS = {"outputs", "outcomes"}
+OPTIONAL_SPEC_KEYS = {"outputs", "outcomes", "reuse_capability", "reuse_artifact"}
 OUTCOME_SPEC_KEYS = {"code", "kind", "detect", "recover", "source"}
 SCENARIO_KEYS = {"name", "params", "sensitive"}
 OUTPUT_KEYS = {"type", "required", "pattern", "description"}
@@ -95,9 +95,16 @@ def spec_from_dict(data) -> CampaignSpec:
             raise CampaignError(f"scenarios {seen[combination]!r} and {scenario.name!r} have the same selector values "
                                 f"{dict(zip(selectors, combination))}; selectors must tell every scenario apart")
         seen[combination] = scenario.name
+    reuse_capability, reuse_artifact = data.get("reuse_capability"), data.get("reuse_artifact")
+    for key, value in (("reuse_capability", reuse_capability), ("reuse_artifact", reuse_artifact)):
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise CampaignError(f"{key} must be a non-empty string when given")
+    if reuse_capability and reuse_artifact:
+        raise CampaignError("give either reuse_capability or reuse_artifact, not both")
     return CampaignSpec(name=data["name"], goal=data["goal"], url=data["url"], selectors=list(selectors),
                         scenarios=scenarios, outputs=outputs_from_dict(data.get("outputs", {})),
-                        outcomes=outcomes_from_dict(data.get("outcomes", [])))
+                        outcomes=outcomes_from_dict(data.get("outcomes", [])),
+                        reuse_capability=reuse_capability, reuse_artifact=reuse_artifact)
 
 
 def outcomes_from_dict(raw) -> list[dict]:
@@ -231,7 +238,13 @@ def run_campaign(
     log = RunLog("campaign", secrets=secrets, echo=echo)
     log.event("campaign_started", capability=spec.name, goal=spec.goal, entry_url=spec.url, spec=spec_path,
               selectors=spec.selectors, scenarios=[s.name for s in spec.scenarios], allowed_hosts=allowed_hosts,
-              outputs=sorted(spec.outputs))
+              outputs=sorted(spec.outputs), reuse_capability=spec.reuse_capability, reuse_artifact=spec.reuse_artifact)
+    try:
+        reuse = resolve_reuse(spec.reuse_capability, spec.reuse_artifact, log)
+    except ReuseError as error:
+        log.event("campaign_failed", error=str(error))
+        summary = finish(log, spec, [], "reuse_misconfigured", None, spec_path)
+        raise CampaignFailed(f"reuse is misconfigured: {error}", None, summary) from error
     records: list[dict] = []
     traces: list[ScenarioTrace] = []
     for scenario in spec.scenarios:
@@ -242,7 +255,8 @@ def run_campaign(
         log.event("scenario_started", scenario=scenario.name, selectors=record["selectors"], params=record["params"])
         try:
             traces.append(discover_scenario(spec, scenario, record, surface_factory, planner_factory, operator,
-                                            allowed_hosts, max_steps, echo, vision_fallback, max_vision_attempts))
+                                            allowed_hosts, max_steps, echo, vision_fallback, max_vision_attempts,
+                                            reuse))
         except Exception as error:   # DiscoveryFailed, or anything the provider, planner, or browser threw
             # Error text may quote a typed value: redact before it reaches the summary or the exception.
             why = redact(str(error), secrets)
@@ -254,14 +268,14 @@ def run_campaign(
             raise CampaignFailed(f"scenario {scenario.name!r} failed: {why}", scenario.name, summary) from error
         record["status"] = "succeeded"
         log.event("scenario_succeeded", scenario=scenario.name, run_id=record["run_id"],
-                  steps=len(traces[-1].artifact.steps))
+                  actions=len(linear_path(traces[-1].artifact)))
 
     try:
         graph = merge_traces(traces, spec.selectors, campaign_id=log.run_id,
                              version=artifact_module.next_version(spec.name))
         for record, entry in zip(records, graph.provenance["scenarios"]):
             record["node_path"] = entry["node_path"]
-        path = save_graph(graph, secrets=secrets)
+        path = save_artifact(graph, secrets=secrets)
     except Exception as error:   # MergeError, a refused save, or anything unexpected
         why = redact(str(error), secrets)
         log.event("campaign_failed", error=why)
@@ -276,27 +290,28 @@ def run_campaign(
 
 def discover_scenario(spec: CampaignSpec, scenario: Scenario, record: dict, surface_factory, planner_factory,
                       operator: Operator, allowed_hosts: list[str], max_steps: int, echo: bool,
-                      vision_fallback: bool = False,
-                      max_vision_attempts: int = DEFAULT_MAX_VISION_ATTEMPTS) -> ScenarioTrace:
-    """One ordinary discovery run: its own log, session, planner, policy and escalation.
+                      vision_fallback: bool = False, max_vision_attempts: int = DEFAULT_MAX_VISION_ATTEMPTS,
+                      reuse: ReusePlan | None = None) -> ScenarioTrace:
+    """One ordinary discovery run: its own log, session(s), planner, policy and escalation.
 
-    Any failure (a stopped discovery, a provider error, a browser that would not start) leaves
-    its evidence behind, closes the session if one was opened, and propagates. Interrupts are not
-    swallowed, but the session is still closed.
+    The reuse orchestrator opens and closes the session(s): the reused prefix and the discovery
+    share one, a failed reuse gets a fresh one. Any failure (a stopped discovery, a provider
+    error, a browser that would not start) leaves its evidence behind and propagates.
     """
     secrets = tuple(str(scenario.params[name]) for name in scenario.sensitive)
     run_log = RunLog("discovery", secrets=secrets, echo=echo)
     record["run_id"] = run_log.run_id
-    surface = None
     try:
         planner = planner_factory(scenario)
-        surface = surface_factory(secrets)
-        built = discover(goal=spec.goal, name=spec.name, params=dict(scenario.params), surface=surface,
-                         planner=planner, policy=Policy(allowed_hosts=list(allowed_hosts)),
-                         escalator=Escalator(operator, SessionControl(), run_log), log=run_log, entry_url=spec.url,
-                         sensitive=set(scenario.sensitive), max_steps=max_steps, output_contract=spec.outputs,
-                         selectors=set(spec.selectors), extra_outcomes=[dict(o) for o in spec.outcomes],
-                         vision=planner if vision_fallback else None, max_vision_attempts=max_vision_attempts)
+        built = discover_with_reuse(lambda: surface_factory(secrets), reuse, goal=spec.goal, name=spec.name,
+                                    params=dict(scenario.params), planner=planner,
+                                    policy=Policy(allowed_hosts=list(allowed_hosts)),
+                                    escalator=Escalator(operator, SessionControl(), run_log), log=run_log,
+                                    entry_url=spec.url, sensitive=set(scenario.sensitive), max_steps=max_steps,
+                                    output_contract=spec.outputs, selectors=set(spec.selectors),
+                                    extra_outcomes=[dict(o) for o in spec.outcomes],
+                                    vision=planner if vision_fallback else None,
+                                    max_vision_attempts=max_vision_attempts)
         if spec.outcomes:
             # discover() appends the reviewer's outcomes as given; reconcile with what the planner declared.
             recorded = [o for o in built.outcomes if not (o.get("source") == "reviewer" and o in spec.outcomes)]
@@ -306,32 +321,15 @@ def discover_scenario(spec: CampaignSpec, scenario: Scenario, record: dict, surf
             raise DiscoveryFailed(f"recorded outputs {sorted(built.outputs)} do not match the declared contract "
                                   f"{sorted(spec.outputs)}")
     except Exception as error:
-        run_log.event("discovery_failed", error=str(error), kind=type(error).__name__)
-        if surface is not None:
-            run_log.screenshot(surface, "failed")
-        close_quietly(surface, run_log)
+        if not isinstance(error, DiscoveryFailed) or "discovery_failed" not in run_log.path.read_text():
+            run_log.event("discovery_failed", error=str(error), kind=type(error).__name__)
         record["evidence"] = str(run_log.copy_to_evidence())
         raise
-    except BaseException:
-        close_quietly(surface, run_log)
-        raise
-    close_quietly(surface, run_log)
     evidence_dir = run_log.copy_to_evidence()
     trace_path = evidence_dir / f"{scenario.name}.trace.json"
     trace_path.write_text(artifact_module.dumps(built, secrets), encoding="utf-8")
     record.update(evidence=str(evidence_dir), trace=str(trace_path))
     return ScenarioTrace(scenario=scenario, artifact=built, run_id=run_log.run_id, planner=planner.name)
-
-
-def close_quietly(surface, run_log: RunLog) -> None:
-    """Close a session if one was opened; a failing close is logged and never hides the real failure."""
-    close = getattr(surface, "close", None)
-    if close is None:
-        return
-    try:
-        close()
-    except Exception as error:
-        run_log.event("surface_close_failed", error=str(error), kind=type(error).__name__)
 
 
 def finish(log: RunLog, spec: CampaignSpec, records: list[dict], status: str, artifact_path, spec_path: str) -> Path:

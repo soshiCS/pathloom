@@ -10,7 +10,7 @@ by recomputation from its own run records (stability.verify_report): the eligibi
 every summary field are re-derived, so an edited flag or total is refused. A report rewritten
 consistently end to end would still pass; that is the limit of a local review record.
 
-Coverage is derived from the graph itself, not from provenance. A schema 2.0 artifact with
+Coverage is derived from the graph itself, not from provenance. An artifact with
 selector inputs must start with an entry decision gate whose edges each carry exactly one
 input_equals guard per selector; those guard values are the declared assignments, and one
 eligible report is required per assignment, with no duplicates and none undeclared. Campaign
@@ -26,10 +26,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import artifact as artifact_module
-from .artifact import ArtifactError
-from .graph import nodes_by_id, outgoing, save_graph
-from .lifecycle import APPROVED, DRAFT, load_any_version, sha256_of
-from .models import ArtifactV2
+from .artifact import ArtifactError, nodes_by_id, outgoing, save_artifact
+from .lifecycle import APPROVED, DRAFT, load_artifact, sha256_of
+from .models import Artifact
 from .stability import REPORT_SCHEMA_VERSION, ReportError, verify_report
 
 REPORT_KEYS = {"report_schema_version", "stability_id", "artifact", "runs_requested", "runs_completed",
@@ -46,7 +45,7 @@ def approve(artifact_path: str | Path, report_paths: list[str | Path], reviewer:
         raise ApprovalError("a reviewer name is required")
     if not report_paths:
         raise ApprovalError("at least one stability report is required")
-    draft = load_any_version(artifact_path)
+    draft = load_artifact(artifact_path)
     if draft.status != DRAFT:
         raise ApprovalError(f"{artifact_path} has status {draft.status!r}; only a draft can be approved")
     digest = sha256_of(artifact_path)
@@ -69,9 +68,7 @@ def approve(artifact_path: str | Path, report_paths: list[str | Path], reviewer:
     # The approved copy is a later version than its source, and never collides with a saved one.
     version = max(artifact_module.next_version(draft.name), draft.version + 1)
     approved = replace(draft, version=version, status=APPROVED, provenance=provenance)
-    if isinstance(approved, ArtifactV2):
-        return save_graph(approved)
-    return artifact_module.save(approved)
+    return save_artifact(approved)
 
 
 def load_report(path: str | Path, draft, digest: str) -> dict:
@@ -133,8 +130,7 @@ def declared_assignments(draft) -> list[dict]:
 
     Provenance is only cross-checked: it can never add to or remove from what the graph enforces.
     """
-    selectors = [name for name, spec in draft.inputs.items() if spec.get("selector")] \
-        if isinstance(draft, ArtifactV2) else []
+    selectors = [name for name, spec in draft.inputs.items() if spec.get("selector")]
     assignments = gate_assignments(draft, selectors) if selectors else []
     provenance = draft.provenance or {}
     recorded = [scenario.get("selectors") for scenario in provenance.get("scenarios") or []
@@ -149,7 +145,7 @@ def declared_assignments(draft) -> list[dict]:
     return assignments
 
 
-def gate_assignments(graph: ArtifactV2, selectors: list[str]) -> list[dict]:
+def gate_assignments(graph: Artifact, selectors: list[str]) -> list[dict]:
     """One complete selector assignment per edge leaving the entry decision gate."""
     entry = nodes_by_id(graph)[graph.entry_node]
     if entry.kind != "decision":

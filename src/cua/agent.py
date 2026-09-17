@@ -2,10 +2,12 @@
 
 The loop is:  observe -> ask planner for ONE action -> policy check -> act -> verify -> record
 
-What gets recorded is not the transcript but the reusable flow: every performed action
-becomes a step (with a checkpoint only when the planner's expectation was actually seen),
-dialog dismissals become recoverable outcomes, and every literal input value is replaced
-by a named placeholder.
+What gets recorded is not the transcript but the reusable flow as a linear capability graph:
+every performed action becomes an action node (with a checkpoint only when the planner's
+expectation was actually seen, an effect from the policy's risk verdict, and a retry policy
+derived from both), the nodes are chained by unconditional edges into a success terminal,
+dialog dismissals become recoverable outcomes, and every literal input value is replaced by
+a named placeholder.
 """
 from __future__ import annotations
 
@@ -14,12 +16,12 @@ import re
 import time
 from dataclasses import replace
 
-from . import artifact as artifact_module
-from .artifact import parameterize, parameterize_locator, placeholders_in, substitute
+from .artifact import (build_linear, classify_effect, classify_retry_safety, parameterize, parameterize_locator,
+                       placeholders_in, substitute)
 from .escalation import AUTOMATION, Escalator
 from .evidence import RunLog
-from .models import (Action, Artifact, Element, InterventionRequest, Locator, Observation, ScreenshotFrame, Step,
-                     TransientError)
+from .models import (Action, Artifact, Element, GraphAction, GraphNode, InterventionRequest, Locator, Observation,
+                     ReusePrefix, ScreenshotFrame, TransientError)
 from .planner import Planner, VisionPlanner
 from .policy import Policy
 from .surface import Surface, is_ambiguous, locator_for, visible_text
@@ -36,20 +38,21 @@ class DiscoveryFailed(Exception):
 
 
 class Recorder:
-    """Accumulates the pieces of the artifact while discovery runs."""
+    """Accumulates the pieces of the artifact while discovery runs: the action nodes of a linear graph."""
 
     def __init__(self, params: dict, output_contract: dict | None = None):
         self.params = params
         self.output_contract = output_contract or {}   # declared outputs: their spec wins over the planner's
-        self.steps: list[Step] = []
+        self.nodes: list[GraphNode] = []
         self.outputs: dict = {}
         self.outcomes: list[dict] = []
         self.success: dict | None = None  # set when the planner's "done" claim is verified
 
     def next_id(self) -> str:
-        return f"s{len(self.steps) + 1}"
+        return f"s{len(self.nodes) + 1}"
 
-    def record_step(self, action: Action, risk: str, seen: Observation, locator: Locator | None = None) -> None:
+    def record_step(self, action: Action, risk: str, seen: Observation, locator: Locator | None = None) -> GraphNode:
+        """Record one performed action as the next action node; returns it."""
         # Extraction verifies itself (the pattern must match), so it carries no checkpoint.
         checkpoint = None
         if action.expect and action.kind != "extract":
@@ -62,8 +65,12 @@ class Recorder:
             ladder = locator or locator_for(action.target, is_ambiguous(action.target, seen))
             target = parameterize_locator(ladder, self.params)
         value = action.output_name if action.kind == "extract" else parameterize(action.value, self.params)
-        self.steps.append(Step(id=self.next_id(), action=action.kind, target=target,
-                               value=value, checkpoint=checkpoint, risk=risk))
+        effect = classify_effect(action.kind, risky=risk == "risky")
+        node = GraphNode(id=self.next_id(), kind="action",
+                         action=GraphAction(action=action.kind, target=target, value=value, checkpoint=checkpoint),
+                         effect=effect, retry_safety=classify_retry_safety(action.kind, effect, checkpoint))
+        self.nodes.append(node)
+        return node
 
     def record_output(self, action: Action, sample: str) -> None:
         declared = self.output_contract.get(action.output_name, {})
@@ -105,9 +112,9 @@ class Recorder:
                                       "detect": detect})
 
     def last_checkpoint(self) -> dict | None:
-        for step in reversed(self.steps):
-            if step.checkpoint:
-                return step.checkpoint
+        for node in reversed(self.nodes):
+            if node.action.checkpoint:
+                return node.action.checkpoint
         return None
 
 
@@ -128,6 +135,7 @@ def discover(
     selectors: set[str] | None = None,
     vision: VisionPlanner | None = None,
     max_vision_attempts: int = DEFAULT_MAX_VISION_ATTEMPTS,
+    prefix: ReusePrefix | None = None,
 ) -> Artifact:
     """Discover a capability by driving the live surface with the planner; return its artifact.
 
@@ -138,6 +146,9 @@ def discover(
     "View details" link a path happens to click.
     `vision`, when given, is the bounded screenshot fallback (see `Vision`): tried only when the
     planner is stuck, at most `max_vision_attempts` times per run and once per unchanged screen.
+    `prefix`, when given, is a verified reusable path that already ran on this surface (reuse.py):
+    its action nodes open the recording and the surface is already positioned, so the entry
+    navigation is skipped and the planner's first look is the screen the prefix ended on.
     """
     sensitive = sensitive or set()
     # Sensitive values are never shown to the model; it sees (and types) the placeholder.
@@ -149,12 +160,25 @@ def discover(
               planner=planner.name, allowed_hosts=policy.allowed_hosts)
 
     escalator.control.require(AUTOMATION)
-    navigate_with_retry(surface, entry_url, log)
-    observation = observe_with_retry(surface, log)
-    app_name = getattr(surface, "title", "") or "unknown"  # captured at the entry screen, before navigating away
-    recorder.steps.append(Step(id="s1", action="navigate", target=None, value=entry_url,
-                               checkpoint=entry_checkpoint(observation), risk="safe"))
-    log.screenshot(surface, "entry")
+    if prefix is None:
+        navigate_with_retry(surface, entry_url, log)
+        observation = observe_with_retry(surface, log)
+        app_name = getattr(surface, "title", "") or "unknown"  # captured at the entry screen, before navigating away
+        checkpoint = entry_checkpoint(observation)
+        recorder.nodes.append(GraphNode(
+            id="s1", kind="action", action=GraphAction(action="navigate", target=None, value=entry_url,
+                                                        checkpoint=checkpoint),
+            effect="none", retry_safety=classify_retry_safety("navigate", "none", checkpoint)))
+        log.screenshot(surface, "entry")
+    else:
+        recorder.nodes.extend(prefix.nodes)
+        recorder.outcomes.extend(prefix.outcomes)
+        recorder.outputs.update(prefix.outputs)
+        observation = observe_with_retry(surface, log)
+        app_name = getattr(surface, "title", "") or "unknown"
+        log.event("discovery_resumed_after_reuse", imported_nodes=len(prefix.nodes),
+                  source=prefix.provenance.get("source_name"), source_version=prefix.provenance.get("source_version"))
+        log.screenshot(surface, "after-reuse")
 
     consecutive_denials = 0
     fallback = Vision(vision, max_vision_attempts, goal, visible_params, params, surface, log) if vision else None
@@ -212,18 +236,21 @@ def discover(
 
     recorder.outcomes.extend(extra_outcomes or [])
     success = recorder.success or recorder.last_checkpoint() or {"url_contains": entry_url}
-    built = artifact_module.build(
+    built = build_linear(
         name=name, goal=goal,
         surface_meta={"kind": "web", "app": app_name, "entry_url": entry_url,
                       "allowed_hosts": list(policy.allowed_hosts)},
-        params=params, steps=recorder.steps, outputs=recorder.outputs, outcomes=recorder.outcomes,
+        params=params, nodes=recorder.nodes, outputs=recorder.outputs, outcomes=recorder.outcomes,
         success=success, run_id=log.run_id, sensitive=sensitive, planner_name=planner.name,
     )
     built.provenance["interventions"] = len(escalator.interventions)
     if fallback and fallback.attempts:
         built.provenance["vision_fallback"] = fallback.provenance()
-    log.event("artifact_built", capability=built.name, version=built.version, steps=len(built.steps),
-              outputs=list(built.outputs), outcomes=[o["code"] for o in built.outcomes])
+    if prefix is not None:
+        built.provenance["reuse"] = {**prefix.provenance, "planner_decisions": turn}
+    log.event("artifact_built", capability=built.name, version=built.version, nodes=len(built.nodes),
+              edges=len(built.edges), entry_node=built.entry_node, outputs=list(built.outputs),
+              outcomes=[o["code"] for o in built.outcomes])
     return built
 
 
@@ -306,8 +333,9 @@ def verify_and_record(action: Action, before: Observation, params: dict, policy:
         recorder.record_recoverable_dialog(before.dialog, action)
         log.event("recorded_recoverable_outcome", dialog=before.dialog[:60])
     else:
-        recorder.record_step(action, risk=policy.risk_of(action), seen=before)
-        log.event("recorded_step", step_id=recorder.steps[-1].id, action=action.kind, checkpoint=action.expect)
+        node = recorder.record_step(action, risk=policy.risk_of(action), seen=before)
+        log.event("recorded_step", step_id=node.id, action=action.kind, checkpoint=action.expect,
+                  effect=node.effect, retry_safety=node.retry_safety)
 
 
 def record_extraction(action: Action, recorder: Recorder, log: RunLog, before: Observation) -> None:
@@ -322,8 +350,8 @@ def record_extraction(action: Action, recorder: Recorder, log: RunLog, before: O
         return
     action.result = f"ok, extracted {value!r}"
     recorder.record_output(action, value)
-    recorder.record_step(action, risk="safe", seen=before)
-    log.event("recorded_output", output_name=action.output_name, value=value, step_id=recorder.steps[-1].id)
+    node = recorder.record_step(action, risk="safe", seen=before)
+    log.event("recorded_output", output_name=action.output_name, value=value, step_id=node.id)
 
 
 def infer_type(sample: str) -> str:
@@ -539,11 +567,11 @@ def verify_vision_action(action: Action, before: Observation, params: dict, poli
         handle_stuck(stuck, surface.observe(), name, goal, escalator, surface, log)
         return
     action.result = "ok"
-    recorder.record_step(action, risk=policy.risk_of(action), seen=before,
-                         locator=vision_locator(action.target, before, fallback.frame))
-    fallback.recorded_steps.append(recorder.steps[-1].id)
-    log.event("recorded_step", step_id=recorder.steps[-1].id, action=action.kind, checkpoint=action.expect,
-              targeting="vision")
+    node = recorder.record_step(action, risk=policy.risk_of(action), seen=before,
+                                locator=vision_locator(action.target, before, fallback.frame))
+    fallback.recorded_steps.append(node.id)
+    log.event("recorded_step", step_id=node.id, action=action.kind, checkpoint=action.expect,
+              effect=node.effect, retry_safety=node.retry_safety, targeting="vision")
 
 
 def vision_locator(target: Element, seen: Observation, frame: ScreenshotFrame) -> Locator:

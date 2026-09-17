@@ -7,7 +7,8 @@
     python3 -m src.cua stability --artifact ... --runs 3 --param NAME=VALUE    # N fresh unattended replays -> report
     python3 -m src.cua approve --artifact ... --report <report.json> --reviewer NAME  # draft -> approved version
 
-Replay runs a schema 1.0 artifact as a linear flow and a schema 2.0 capability graph as a graph.
+Every artifact is a capability graph (schema 2.0); `discover` records a linear one, a campaign
+merges several into a branching one, and one deterministic engine replays both.
 Lifecycle: draft -> supervised replay or stability runs -> approve -> approved -> unattended replay.
 An unattended replay (--operator none) of a draft stops with artifact_not_approved before any
 browser exists; approval is a local review record backed by stability reports, not a signature.
@@ -24,18 +25,18 @@ from dataclasses import asdict
 from urllib.parse import urlparse
 
 from . import artifact as artifact_module
-from . import graph as graph_module
-from .agent import DEFAULT_MAX_VISION_ATTEMPTS, DiscoveryFailed, discover
+from .agent import DEFAULT_MAX_VISION_ATTEMPTS, DiscoveryFailed
 from .approval import ApprovalError, approve
 from .campaign import CampaignError, CampaignFailed, load_spec, run_campaign
 from .escalation import ConsoleOperator, Escalator, NoOperator, SessionControl
 from .evidence import RunLog
-from .graph_replay import DEFAULT_IRREVERSIBLE_POLICY, IRREVERSIBLE_POLICIES
-from .lifecycle import (SUPERVISED, UNATTENDED, is_approved, load_any_version, not_approved_result, policy_for,
-                        replay_any, write_bundle)
+from .lifecycle import (SUPERVISED, UNATTENDED, is_approved, load_artifact, not_approved_result, policy_for,
+                        run_replay, write_bundle)
 from .planner import (DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL, ClaudePlanner,
                       OpenAIPlanner)
 from .policy import Policy
+from .replay import DEFAULT_IRREVERSIBLE_POLICY, IRREVERSIBLE_POLICIES
+from .reuse import ReuseError, discover_with_reuse, resolve_reuse
 from .stability import run_stability
 from .surface import PlaywrightSurface
 
@@ -76,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
     disc.add_argument("--missing-outcome", action="append", default=[], metavar="CODE=TEXT",
                       help="extra business outcome identified by absent text, e.g. product_not_found='{{product_name}}'")
     add_vision_options(disc)
+    reuse = disc.add_mutually_exclusive_group()
+    reuse.add_argument("--reuse-capability", metavar="NAME",
+                       help="open the discovery by replaying the newest approved artifact with this name")
+    reuse.add_argument("--reuse-artifact", metavar="PATH",
+                       help="open the discovery by replaying exactly this approved artifact")
     add_shared_run_options(disc)
 
     camp = commands.add_parser("discover-campaign",
@@ -94,13 +100,13 @@ def build_parser() -> argparse.ArgumentParser:
     rep = commands.add_parser("replay", help="deterministic replay of a saved artifact (no LLM)")
     rep.add_argument("--artifact", required=True, help="path to artifacts/<name>.vN.json")
     rep.add_argument("--irreversible-policy", choices=IRREVERSIBLE_POLICIES, default=DEFAULT_IRREVERSIBLE_POLICY,
-                     help="schema 2.0 graphs: what to do at an action whose effect is irreversible "
+                     help="what to do at an action whose effect is irreversible "
                           "(default: confirm with a human; unknown effects always need a human)")
     add_shared_run_options(rep)
 
     stab = commands.add_parser("stability", help="replay one invocation N times, unattended and on a fresh session "
                                                  "each time, and write a report that approval can use")
-    stab.add_argument("--artifact", required=True, help="path to artifacts/<name>.vN.json (either schema)")
+    stab.add_argument("--artifact", required=True, help="path to artifacts/<name>.vN.json")
     stab.add_argument("--runs", type=int, default=3, help="number of replays (default: 3)")
     add_shared_run_options(stab, operator=False)
 
@@ -148,29 +154,33 @@ def cmd_discover(args: argparse.Namespace) -> int:
     extra_outcomes += [{"code": code, "kind": "business", "source": "reviewer", "detect": {"text_missing": text}}
                        for code, text in (item.split("=", 1) for item in args.missing_outcome)]
 
-    surface = PlaywrightSurface(headless=not args.headed, secrets=secrets)
+    try:
+        reuse = resolve_reuse(args.reuse_capability, args.reuse_artifact, log)
+    except ReuseError as error:
+        print(f"Cannot reuse: {error}")
+        return 2
     escalator = Escalator(make_operator(args), SessionControl(), log)
     try:
         planner = make_planner(args)
-        built = discover(goal=args.goal, name=args.name, params=params, surface=surface,
-                         planner=planner, policy=policy, escalator=escalator, log=log,
-                         entry_url=args.url, sensitive=sensitive, max_steps=args.max_steps,
-                         extra_outcomes=extra_outcomes, vision=planner if args.vision_fallback else None,
-                         max_vision_attempts=args.max_vision_attempts)
-        path = artifact_module.save(built, secrets)
+        built = discover_with_reuse(lambda: PlaywrightSurface(headless=not args.headed, secrets=secrets), reuse,
+                                    goal=args.goal, name=args.name, params=params, planner=planner, policy=policy,
+                                    escalator=escalator, log=log, entry_url=args.url, sensitive=sensitive,
+                                    max_steps=args.max_steps, extra_outcomes=extra_outcomes,
+                                    vision=planner if args.vision_fallback else None,
+                                    max_vision_attempts=args.max_vision_attempts)
+        path = artifact_module.save_artifact(built, secrets)
         log.event("artifact_saved", path=str(path))
         evidence_dir = log.copy_to_evidence()
         shutil.copy2(path, evidence_dir / path.name)
         print(f"\nDiscovery succeeded. Artifact: {path}\nEvidence: {evidence_dir}")
         return 0
+    except ReuseError as error:
+        print(f"Cannot reuse: {error}")
+        return 2
     except DiscoveryFailed as error:
-        log.event("discovery_failed", error=str(error))
-        log.screenshot(surface, "failed")
         evidence_dir = log.copy_to_evidence()
         print(f"\nDiscovery failed: {error}\nEvidence: {evidence_dir}")
         return 2
-    finally:
-        surface.close()
 
 
 def cmd_discover_campaign(args: argparse.Namespace) -> int:
@@ -199,7 +209,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     secrets = tuple(str(params[name]) for name in args.sensitive if name in params)
     log = RunLog("replay", secrets=secrets, echo=not args.quiet)
     try:
-        loaded = load_any_version(args.artifact)
+        loaded = load_artifact(args.artifact)
     except artifact_module.ArtifactError as error:
         print(f"Cannot load artifact: {error}")
         return 2
@@ -219,7 +229,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     surface = PlaywrightSurface(headless=not args.headed, secrets=secrets)
     escalator = Escalator(make_operator(args), SessionControl(), log)
     try:
-        result = replay_any(loaded, params, surface, policy_for(loaded, args.allow_host), escalator, log,
+        result = run_replay(loaded, params, surface, policy_for(loaded, args.allow_host), escalator, log,
                             purpose=UNATTENDED if args.operator == "none" else SUPERVISED,
                             irreversible_policy=args.irreversible_policy)
     finally:

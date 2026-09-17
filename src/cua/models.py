@@ -95,33 +95,7 @@ class Locator:
     Most stable first (role+name), most brittle last (screen coordinates)."""
     strategies: list[dict]
 
-@dataclass
-class Step:
-    id: str
-    action: str                   # click | type | navigate
-    target: Locator | None
-    value: str | None = None      # may contain {{param}} placeholders
-    checkpoint: dict | None = None  # {"text_contains": "..."} — asserted after the action
-    risk: str = "safe"            # safe | risky (irreversible)
-
-
-@dataclass
-class Artifact:
-    schema_version: str
-    name: str
-    version: int
-    status: str                   # draft | approved
-    description: str
-    surface: dict                 # {"kind": "web", "app": ..., "entry_url": ...}
-    inputs: dict                  # name -> {"type", "required", "sensitive"}
-    outputs: dict                 # name -> {"type", "locator", "pattern"}
-    steps: list[Step]
-    outcomes: list[dict]          # declared non-success states with kind business|recoverable
-    success: dict                 # final checkpoint
-    provenance: dict              # run id, timestamp, model — NOT the transcript
-
-
-# ---------- capability graph (schema 2.0) ----------
+# ---------- the capability graph: the one artifact schema ("2.0") ----------
 
 NodeKind = Literal["action", "decision", "terminal"]
 Effect = Literal["none", "reversible", "irreversible", "unknown"]
@@ -131,7 +105,7 @@ GuardKind = Literal["always", "input_equals", "text_visible", "url_matches", "el
 
 @dataclass
 class Guard:
-    """One deterministic condition on an edge. Which fields a kind carries is fixed (graph.GUARD_FIELDS):
+    """One deterministic condition on an edge. Which fields a kind carries is fixed (artifact.GUARD_FIELDS):
 
     always           no fields
     input_equals     input (a declared input name), value (the literal it must equal)
@@ -157,8 +131,7 @@ class GraphEdge:
 
 @dataclass
 class GraphAction:
-    """What an action node does: a version-1 Step without its id and risk, which the node carries
-    as GraphNode.id and GraphNode.effect."""
+    """What an action node does on the surface; its identity, effect and retry policy live on the node."""
     action: str                   # click | type | navigate | extract
     target: Locator | None
     value: str | None = None      # may contain {{param}} placeholders; the output name for extract
@@ -177,8 +150,10 @@ class GraphNode:
 
 
 @dataclass
-class ArtifactV2:
-    """The version-1 contract with the ordered step list replaced by a guarded, acyclic graph."""
+class Artifact:
+    """A capability: typed inputs and outputs, declared outcomes, a success checkpoint, and a guarded,
+    acyclic graph of action, decision and terminal nodes. `version` is the capability revision
+    (`name.v<version>.json`); `schema_version` is the file format, always "2.0"."""
     schema_version: str
     name: str
     version: int
@@ -213,11 +188,13 @@ class CampaignSpec:
     scenarios: list[Scenario]
     outputs: dict = field(default_factory=dict)  # optional declared contract: name -> {type, required, pattern}
     outcomes: list[dict] = field(default_factory=list)  # reviewer-declared outcomes every scenario records
+    reuse_capability: str | None = None          # newest approved artifact with this name opens every scenario
+    reuse_artifact: str | None = None            # or this exact approved artifact file
 
 
 @dataclass
 class ScenarioTrace:
-    """The verified linear artifact one scenario's discovery run recorded."""
+    """The verified linear graph one scenario's discovery run recorded."""
     scenario: Scenario
     artifact: Artifact
     run_id: str
@@ -225,11 +202,32 @@ class ScenarioTrace:
 
 
 @dataclass
+class ReusePlan:
+    """A resolved, approved capability whose executed path may open a new discovery."""
+    path: str
+    digest: str
+    artifact: Artifact
+    name: str
+    version: int
+    schema_version: str
+
+
+@dataclass
+class ReusePrefix:
+    """What a successful reuse hands to discovery: the executed action nodes renumbered, their recoverable
+    outcomes and outputs, and the provenance to record. Parameter values never appear here."""
+    nodes: list[GraphNode]
+    outcomes: list[dict]
+    outputs: dict
+    provenance: dict
+
+
+@dataclass
 class CampaignResult:
     campaign_id: str
     artifact_path: str
     summary_path: str
-    graph: ArtifactV2
+    graph: Artifact
     scenarios: list[dict]         # one record per scenario: evidence, trace, node path
 
 # ---------- replay result contract ----------
@@ -246,6 +244,8 @@ class ReplayResult:
     observed: str | None = None
     recoveries: list[str] = field(default_factory=list)  # what was auto-recovered along the way
     interventions: list[dict] = field(default_factory=list)
+    executed_path: list[dict] = field(default_factory=list)  # action nodes completed and traversed, once each, in order
+    performed_attempts: int = 0                          # physical UI actions attempted (diagnostic; never imported)
 
 
 # ---------- escalation ----------

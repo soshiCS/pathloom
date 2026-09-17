@@ -68,9 +68,10 @@ def test_vision_fills_the_gap_and_the_step_replays_without_any_planner():
     assert (planner.calls[0]["width"], planner.calls[0]["height"]) == VIEWPORT
     assert ("click", "Login", "") in surface.actions and surface.screen == "overview"
 
-    step = artifact.steps[3]
-    assert step.action == "click" and step.checkpoint == {"text_contains": "Products"} and step.risk == "safe"
-    assert step.target.strategies == [{"kind": "role", "role": "button", "name": "Login"},   # grounded: same box
+    node = artifact.nodes[3]
+    assert node.action.action == "click" and node.action.checkpoint == {"text_contains": "Products"}
+    assert (node.effect, node.retry_safety) == ("reversible", "verify_before_retry")
+    assert node.action.target.strategies == [{"kind": "role", "role": "button", "name": "Login"},   # grounded: same box
                                       {"kind": "coords", "x": 35, "y": 20, "exact": True,
                                        "viewport": {"width": VIEWPORT[0], "height": VIEWPORT[1]},
                                        "scroll": {"x": 0, "y": 0}}]
@@ -96,7 +97,7 @@ def test_vision_fills_the_gap_and_the_step_replays_without_any_planner():
 
 def test_vision_is_never_called_when_structured_discovery_can_proceed():
     artifact, planner, _, log = run(checkout_script(), [LOGIN_VIA_VISION])
-    assert planner.frames == [] and len(artifact.steps) == 15
+    assert planner.frames == [] and len(artifact.nodes) == 16
     assert "vision_fallback" not in artifact.provenance
     assert not any(json.loads(l)["event"].startswith("vision_") for l in log.path.read_text().splitlines())
 
@@ -314,14 +315,13 @@ def test_provider_without_image_support_returns_unavailable():
 
 # ---------- replay stays model-free; artifacts stay compatible ----------
 
-def test_replay_engines_never_import_or_reference_vision():
-    probe = ("import sys, src.cua.replay, src.cua.graph_replay, src.cua.stability, src.cua.approval; "
+def test_the_replay_engine_never_imports_or_references_vision():
+    probe = ("import sys, src.cua.replay, src.cua.stability, src.cua.approval; "
              "print(sorted(m for m in sys.modules if m in ('src.cua.planner', 'anthropic', 'openai')))")
     loaded = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True).stdout
     assert loaded.strip() == "[]"
-    for module in ("src/cua/replay.py", "src/cua/graph_replay.py"):
-        source = open(module).read()
-        assert "decide_visually" not in source and "viewport_screenshot" not in source
+    source = open("src/cua/replay.py").read()
+    assert "decide_visually" not in source and "viewport_screenshot" not in source
 
 
 def test_coordinate_rungs_without_viewport_metadata_are_unchanged():
@@ -444,8 +444,8 @@ def test_declared_placeholders_in_a_visual_type_are_substituted_when_acting():
     artifact, planner, surface, _ = run(script + after_login(), [typed, login], max_attempts=2)
     assert ("type", "Username", "standard_user") in surface.actions                # the real value was typed
     assert planner.calls[0]["params"]["password"] == "{{password}}"
-    assert artifact.steps[1].value == "{{username}}"                              # recorded as the placeholder
-    assert artifact.steps[1].checkpoint == {"text_contains": "{{username}}"}
+    assert artifact.nodes[1].action.value == "{{username}}"                       # recorded as the placeholder
+    assert artifact.nodes[1].action.checkpoint == {"text_contains": "{{username}}"}
 
 
 # ---------- the visual locator ----------

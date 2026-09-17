@@ -4,16 +4,14 @@ from dataclasses import replace
 
 import pytest
 
-from src.cua.agent import DiscoveryFailed
-from src.cua.artifact import build
+from src.cua.artifact import build_linear, load_artifact, missing_inputs, outgoing, save_artifact, to_dict
 from src.cua.campaign import CampaignError, load_spec, reconcile_outcomes, spec_from_dict
 from src.cua.escalation import NoOperator
-from src.cua.graph import load_graph, missing_inputs, nodes_by_id, outgoing, save_graph
-from src.cua.graph_replay import replay_graph
 from src.cua.merge import merge_traces
-from src.cua.models import Action, Element, Scenario, ScenarioTrace, Step
+from src.cua.models import Action, Element, GraphAction, GraphNode, Scenario, ScenarioTrace
 from src.cua.policy import Policy
-from tests.context import Escalator, Locator, RunLog, SessionControl
+from src.cua.replay import replay
+from tests.context import Escalator, Locator, RunLog, SessionControl, linear_node
 from tests.fake_surface import FakeSurface
 
 SPEC = "scenarios/member_account_prepare.json"
@@ -33,39 +31,42 @@ def text(prefix: str) -> Locator:
     return Locator(strategies=[{"kind": "text", "text": prefix}])
 
 
-def member_ops_steps(lookup_method: str, account_type: str) -> list[Step]:
+def act(action: str, target: Locator | None, value: str | None = None, checkpoint: dict | None = None,
+        risky: bool = False) -> GraphNode:
+    return linear_node("x", GraphAction(action=action, target=target, value=value, checkpoint=checkpoint), risky=risky)
+
+
+def member_ops_nodes(lookup_method: str, account_type: str) -> list[GraphNode]:
     """What a discovery run records for one scenario, as the app's controls are perceived."""
-    lookup = ([Step(id="x", action="click", target=role("link", "By phone"),
-                    checkpoint={"text_contains": "Phone number"}),
-               Step(id="x", action="type", target=role("textbox", "Phone number"), value="{{phone}}")]
+    lookup = ([act("click", role("link", "By phone"), checkpoint={"text_contains": "Phone number"}),
+               act("type", role("textbox", "Phone number"), "{{phone}}")]
               if lookup_method == "phone" else
-              [Step(id="x", action="type", target=role("textbox", "Member ID"), value="{{member_id}}")])
+              [act("type", role("textbox", "Member ID"), "{{member_id}}")])
     label = "Savings" if account_type == "savings" else "Checking"
-    steps = [
-        Step(id="x", action="navigate", target=None, value=BASE, checkpoint={"text_contains": "Sign in"}),
-        Step(id="x", action="type", target=role("textbox", "Username"), value="{{username}}"),
-        Step(id="x", action="type", target=role("textbox", "Password"), value="{{password}}"),
-        Step(id="x", action="click", target=role("button", "Sign in"), checkpoint={"text_contains": "Member lookup"}),
+    nodes = [
+        act("navigate", None, BASE, checkpoint={"text_contains": "Sign in"}),
+        act("type", role("textbox", "Username"), "{{username}}"),
+        act("type", role("textbox", "Password"), "{{password}}"),
+        act("click", role("button", "Sign in"), checkpoint={"text_contains": "Member lookup"}),
         *lookup,
-        Step(id="x", action="click", target=role("button", "Search"), checkpoint={"text_contains": "Member profile"}),
-        Step(id="x", action="click", target=role("link", "New sub-account"),
-             checkpoint={"text_contains": "Choose the account type"}),
-        Step(id="x", action="click", target=role("link", label), checkpoint={"text_contains": "Opening deposit"}),
-        Step(id="x", action="type", target=role("textbox", "Opening deposit (USD)"), value="{{opening_deposit}}"),
-        Step(id="x", action="click", target=role("button", "Continue to review"), checkpoint=SUCCESS),
-        Step(id="x", action="extract", target=text("Member name:"), value="member_name"),
-        Step(id="x", action="extract", target=text("Account type:"), value="account_type"),
-        Step(id="x", action="extract", target=text("Opening deposit:"), value="opening_deposit"),
+        act("click", role("button", "Search"), checkpoint={"text_contains": "Member profile"}),
+        act("click", role("link", "New sub-account"), checkpoint={"text_contains": "Choose the account type"}),
+        act("click", role("link", label), checkpoint={"text_contains": "Opening deposit"}),
+        act("type", role("textbox", "Opening deposit (USD)"), "{{opening_deposit}}"),
+        act("click", role("button", "Continue to review"), checkpoint=SUCCESS),
+        act("extract", text("Member name:"), "member_name"),
+        act("extract", text("Account type:"), "account_type"),
+        act("extract", text("Opening deposit:"), "opening_deposit"),
     ]
-    return [replace(step, id=f"s{index}") for index, step in enumerate(steps, start=1)]
+    return [replace(node, id=f"s{index}") for index, node in enumerate(nodes, start=1)]
 
 
 def trace(scenario: Scenario, outcomes=()) -> ScenarioTrace:
-    artifact = build(name="member_account_prepare", goal="prepare a sub-account", surface_meta=SURFACE,
-                     params=scenario.params, steps=member_ops_steps(scenario.params["lookup_method"],
-                                                                     scenario.params["account_type"]),
-                     outputs=OUTPUTS, outcomes=[dict(o) for o in outcomes], success=SUCCESS,
-                     run_id=f"discovery-{scenario.name}", sensitive=set(scenario.sensitive))
+    artifact = build_linear(name="member_account_prepare", goal="prepare a sub-account", surface_meta=SURFACE,
+                            params=scenario.params, nodes=member_ops_nodes(scenario.params["lookup_method"],
+                                                                            scenario.params["account_type"]),
+                            outputs=OUTPUTS, outcomes=[dict(o) for o in outcomes], success=SUCCESS,
+                            run_id=f"discovery-{scenario.name}", sensitive=set(scenario.sensitive))
     return ScenarioTrace(scenario=scenario, artifact=artifact, run_id=f"discovery-{scenario.name}", planner="scripted")
 
 
@@ -78,14 +79,14 @@ def merged():
 OPEN_SPEC = "scenarios/member_account_open.json"
 
 
-def open_steps() -> list[Step]:
+def open_nodes() -> list[GraphNode]:
     """What a supervised discovery records for the side-effecting capability: the human approved the final click."""
-    prepare = member_ops_steps("member_id", "savings")[:-3]         # up to Continue to review, no extracts
-    final = [Step(id="x", action="click", target=role("button", "Confirm and Open Account"),
-                  checkpoint={"text_contains": "Sub-account opened"}, risk="risky"),
-             Step(id="x", action="extract", target=text("Account "), value="account_number"),
-             Step(id="x", action="extract", target=text("Account "), value="opening_deposit")]
-    return [replace(step, id=f"s{index}") for index, step in enumerate(prepare + final, start=1)]
+    prepare = member_ops_nodes("member_id", "savings")[:-3]         # up to Continue to review, no extracts
+    final = [act("click", role("button", "Confirm and Open Account"),
+                 checkpoint={"text_contains": "Sub-account opened"}, risky=True),
+             act("extract", text("Account "), "account_number"),
+             act("extract", text("Account "), "opening_deposit")]
+    return [replace(node, id=f"s{index}") for index, node in enumerate(prepare + final, start=1)]
 
 
 # ---------- the specification ----------
@@ -147,8 +148,8 @@ def test_undeclared_phone_checking_is_rejected_before_any_surface_action(merged)
     log = RunLog("replay", secrets=("training_only",))
     params = {"username": "operator", "password": "training_only", "opening_deposit": "250",
               "lookup_method": "phone", "phone": "5550101", "account_type": "checking"}
-    result = replay_graph(merged, params, surface, Policy(allowed_hosts=["127.0.0.1"]),
-                          Escalator(NoOperator(), SessionControl(), log), log)
+    result = replay(merged, params, surface, Policy(allowed_hosts=["127.0.0.1"]),
+                    Escalator(NoOperator(), SessionControl(), log), log)
     assert result.status == "failure" and result.outcome_code == "no_matching_edge" and result.step_id == "d1"
     assert surface.actions == [] and result.interventions[0]["disposition"] == "abort"
 
@@ -168,7 +169,7 @@ def test_policy_classifies_the_final_button_as_irreversible_but_not_blocked():
 
 
 def test_password_never_reaches_the_artifact_or_the_log(merged, tmp_path):
-    path = save_graph(merged, secrets=("training_only",), path=tmp_path / "member_account_prepare.v1.json")
+    path = save_artifact(merged, secrets=("training_only",), path=tmp_path / "member_account_prepare.v1.json")
     saved = path.read_text()
     assert "training_only" not in saved and "{{password}}" in saved
     assert json.loads(saved)["inputs"]["password"]["sensitive"] is True
@@ -249,8 +250,8 @@ def test_declared_outcomes_survive_trace_merge_and_round_trip(merged, tmp_path):
     spec = load_spec(SPEC)
     assert [o["code"] for o in merged.outcomes] == [o["code"] for o in spec.outcomes]
     assert all(o["source"] == "reviewer" for o in merged.outcomes)
-    path = save_graph(merged, secrets=("training_only",), path=tmp_path / "prepare.json")
-    loaded = load_graph(path)
+    path = save_artifact(merged, secrets=("training_only",), path=tmp_path / "prepare.json")
+    loaded = load_artifact(path)
     assert loaded.outcomes == merged.outcomes == spec.outcomes
 
 
@@ -278,12 +279,13 @@ def test_open_spec_shares_the_prepare_outcomes_it_needs():
 def test_open_capability_records_the_final_click_as_irreversible_and_never_retry():
     spec = load_spec(OPEN_SPEC)
     scenario = spec.scenarios[0]
-    artifact = build(name=spec.name, goal=spec.goal, surface_meta=SURFACE, params=scenario.params, steps=open_steps(),
-                     outputs=spec.outputs, outcomes=spec.outcomes, success={"text_contains": "Sub-account opened"},
-                     run_id="discovery-open", sensitive={"password"})
+    artifact = build_linear(name=spec.name, goal=spec.goal, surface_meta=SURFACE, params=scenario.params,
+                            nodes=open_nodes(), outputs=spec.outputs, outcomes=spec.outcomes,
+                            success={"text_contains": "Sub-account opened"}, run_id="discovery-open",
+                            sensitive={"password"})
     graph = merge_traces([ScenarioTrace(scenario, artifact, "discovery-open", "scripted")], [], "campaign-open")
     final = next(n for n in graph.nodes if n.kind == "action" and n.action.target
                  and n.action.target.strategies[0].get("name") == "Confirm and Open Account")
     assert (final.effect, final.retry_safety) == ("irreversible", "never_retry")
     assert graph.entry_node == "s1" and all(n.kind != "decision" for n in graph.nodes)
-    assert "training_only" not in json.dumps(__import__("src.cua.graph", fromlist=["to_dict"]).to_dict(graph))
+    assert "training_only" not in json.dumps(to_dict(graph)) and '"risk"' not in json.dumps(to_dict(graph))

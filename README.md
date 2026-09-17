@@ -42,16 +42,25 @@ One Python process, four seams, no services. The Python package is still called 
 | `src/cua/agent.py` | Discovery loop: observe, decide, policy, act, verify, record; parameterizes values and locators; outputs and outcomes |
 | `src/cua/campaign.py` | Human-declared scenarios: one discovery run per scenario on a fresh session, campaign evidence and summary |
 | `src/cua/merge.py` | Conservative prefix-tree merge of verified traces into one graph with an entry selector gate |
-| `src/cua/artifact.py`, `graph.py`, `models.py` | Schema 1.0 (linear) and 2.0 (graph) artifacts: build, validate, save, load, convert |
-| `src/cua/replay.py`, `graph_replay.py` | Deterministic replay engines (internal components): ladders, checkpoints, guards, effect policy, retry safety, escalation |
+| `src/cua/artifact.py`, `models.py` | The one capability artifact schema (a guarded acyclic graph, `schema_version: "2.0"`): the linear builder discovery uses, validation, serialization, immutable save and load |
+| `src/cua/replay.py` | The one deterministic replay engine (an internal component): ladders, checkpoints, guards, effect policy, retry safety, escalation, the execution trace |
 | `src/cua/policy.py`, `escalation.py`, `evidence.py` | Allowlists and risk classification, same-session human handoff, redacted logs and evidence bundles |
 | `src/cua/lifecycle.py`, `stability.py`, `approval.py` | Draft/approved gate, multi-run stability reports, local approval record |
 | `src/cua/__main__.py` | CLI: `discover`, `discover-campaign`, `stability`, `approve`, `replay` |
 | `examples/member_ops/` | MemberOps Sandbox, a fictional back-office app with runtime modes for each result class (see below) |
 
-**Discovery uses an LLM; replay never does.** The replay engines, the stability command and the
+**Discovery uses an LLM; replay never does.** The replay engine, the stability command and the
 approval command do not import the planner or either provider SDK, and the test suite proves it
 in a clean interpreter.
+
+**One artifact schema.** Every artifact, whether `discover` recorded it or a campaign merged it,
+is the same capability graph: action nodes (what to do, with an `effect` and a `retry_safety`),
+decision nodes (typed guards choose the next edge) and terminal nodes. A single discovery yields
+a linear graph, `s1 -> s2 -> ... -> success`, joined by `always` edges; a campaign merges several
+such graphs into a branching one; one engine replays both. `schema_version` is the file format
+and is always `"2.0"`; the `N` in `artifacts/<name>.vN.json` is the capability revision (a
+re-recording or an approval writes the next one), not a schema version. A file with any other
+schema version is refused with a clear error.
 
 ## Setup
 
@@ -132,12 +141,12 @@ to watch the browser, and take over the same session from the terminal whenever 
 python -m pytest
 ```
 
-330 tests, all offline. The browser and the model are replaced at their protocol boundaries by
-`tests/fake_surface.py` and `tests/scripted_planner.py`. The 37 tests marked `browser` (perception
+313 tests, all offline. The browser and the model are replaced at their protocol boundaries by
+`tests/fake_surface.py` and `tests/scripted_planner.py`. The 38 tests marked `browser` (perception
 rules on a local page, and the MemberOps campaigns driven through the real Chromium adapter by a
 scripted planner, then replayed in every runtime mode) start a local headless Chromium with no
 network and skip when it is absent; they take about nine minutes, so
-`python -m pytest -m "not browser"` (293 tests, under a minute) is the quick loop.
+`python -m pytest -m "not browser"` (275 tests, under a minute) is the quick loop.
 
 ## MemberOps Sandbox: a controlled back-office target
 
@@ -226,13 +235,46 @@ uncertain result.
 
 ## What the evidence shows
 
-`evidence/INDEX.md` maps every retained folder to what it proves. In short: one real OpenAI
-campaign (three discoveries, planner reasons logged), the merged draft graph, three stability
-reports over nine live replays with total `32.39` every time and no recovery, intervention or
-locator fallback, the approval record, an approved unattended replay, an undeclared combination
-stopped at the gate with zero actions, a locked-out user classified as a business outcome, and
-the earlier single-artifact evidence (`checkout_review.v1.json`, discovered with `claude-opus-5`),
-including the run that proves an appended `Finish` step is never clicked unattended.
+`evidence/INDEX.md` maps every retained folder to what it proves. In short, on SauceDemo: three
+stability reports over nine live replays of the draft graph with total `32.39` every time and no
+recovery, intervention or locator fallback, the approval record, an approved unattended replay,
+an undeclared combination stopped at the gate with zero actions, and a locked-out user
+classified as a business outcome. On MemberOps: supervised replays of the three declared paths,
+three stability reports, an approved revision and its replays including a same-session operator
+handoff, and the open capability refused under `deny` and run once under `confirm` with a
+recorded approval. The proof that an irreversible final click is never performed unattended
+lives in the offline suite and in the MemberOps `irreversible_denied` replay.
+
+## Verified prefix reuse
+
+A discovery may start from an approved capability that already performs its beginning, for
+example `sign in -> find member -> open profile` before `prepare a savings sub-account`:
+
+```bash
+python -m src.cua discover --reuse-capability member_profile_lookup ...   # newest approved version by name
+python -m src.cua discover --reuse-artifact artifacts/member_profile_lookup.v3.json ...   # or exactly this file
+```
+
+(`reuse_capability` / `reuse_artifact` do the same at the top level of a campaign spec; the two
+are mutually exclusive, and one prefix per discovery.) Before any browser exists, the prefix is
+checked: approved, unchanged digest, its required inputs present with matching sensitivity, the
+same entry URL, no hosts beyond the discovery's allowlist, and no irreversible, unknown or risky
+action anywhere in it. It is then replayed on the live session with no operator and no model,
+under the `discovery_reuse` purpose (approved only, irreversible policy forced to deny). If it
+succeeds, the planner's first look is the screen it ended on and the executed path (the action
+nodes the engine completed, in order, on the branch actually taken) becomes the opening nodes of
+the new recording; if it fails, ends in a business outcome, crashes, or its path cannot be
+imported, that session is closed and ordinary discovery starts on a fresh one, so the model never
+continues on a possibly dirty session. The new artifact is self-contained: nodes are renumbered
+and otherwise copied exactly (action, ladder, checkpoint, `effect`, `retry_safety`), decision and
+terminal nodes are never imported, extractions only when the new discovery declares the same
+output contract, and provenance names the source, its version and digest, the executed path and
+the run id, never a parameter value.
+A name with no approved artifact logs `reuse_not_found` and discovery proceeds normally; an
+explicit path that is missing, unreadable or not approved is a configuration error. This is
+reuse of a verified, checkpointed prefix, not a cache of isolated clicks, which would lack the
+preconditions that make a step safe to repeat. No live reuse run has been recorded; the suite
+proves it on the fake shop and, in Chromium, on MemberOps.
 
 ## Browser perception
 
@@ -274,13 +316,13 @@ check (allowlist, blocked controls, risk confirmation), is performed once by coo
 kept only when structured perception proves the expected text newly appeared; otherwise a person
 is asked and nothing is repeated. Budgets:
 `--max-vision-attempts` per run (default 2), never twice for an unchanged screen, no retry after
-`no_target`. The recorded step is an exact coordinate rung (`exact: true`) bound to the viewport and scroll
+`no_target`. The recorded node's ladder is an exact coordinate rung (`exact: true`) bound to the viewport and scroll
 position it was captured at; a role-and-name rung is added only when a structured element with
 that identity really sits under the box, so a guessed name can never send replay to a different
 control. **Replay never calls a model or takes a screenshot for one**: an exact rung resolves to
 the recorded mouse point itself, is refused in another viewport or scroll position, and the
 recorded checkpoint is verified afterwards. Visual extraction is deliberately
-unsupported because replay could not reproduce it. Coordinate steps are weaker than semantic
+unsupported because replay could not reproduce it. Coordinate nodes are weaker than semantic
 ones, so such artifacts stay drafts until stability runs and approval say otherwise. Optional
 `OPENAI_VISION_MODEL` / `ANTHROPIC_VISION_MODEL` pick a different model for the visual call;
 a model without image support makes the fallback unavailable and discovery escalates as before.

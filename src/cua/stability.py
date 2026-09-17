@@ -30,9 +30,9 @@ from typing import Callable
 
 from .escalation import Escalator, NoOperator, SessionControl
 from .evidence import RunLog
-from .lifecycle import (STABILITY, STABILITY_IRREVERSIBLE_POLICY, load_any_version, policy_for, replay_any, sha256_of,
+from .lifecycle import (STABILITY, STABILITY_IRREVERSIBLE_POLICY, load_artifact, policy_for, run_replay, sha256_of,
                         write_bundle)
-from .models import Artifact, ArtifactV2, ReplayResult
+from .models import Artifact, ReplayResult
 from .policy import redact
 from .surface import Surface
 
@@ -64,7 +64,7 @@ def run_stability(
         raise ValueError("runs must be at least 1")
     secrets = tuple(str(params[name]) for name in sensitive if name in params)
     log = RunLog("stability", secrets=secrets, echo=echo)
-    loaded = load_any_version(artifact_path)          # validated once up front; every run reloads it
+    loaded = load_artifact(artifact_path)             # validated once up front; every run reloads it
     log.event("stability_started", artifact=str(artifact_path), capability=loaded.name, version=loaded.version,
               schema_version=loaded.schema_version, status=loaded.status, runs=runs, params=sorted(params),
               irreversible_policy=STABILITY_IRREVERSIBLE_POLICY)
@@ -89,11 +89,11 @@ def one_run(index: int, artifact_path, params: dict, secrets: tuple[str, ...], s
     log.event("run_started", run=index, run_id=run_log.run_id)
     surface = None
     try:
-        loaded = load_any_version(artifact_path)
+        loaded = load_artifact(artifact_path)
         record["artifact_sha256"] = sha256_of(artifact_path)
         surface = surface_factory(secrets)
         escalator = Escalator(NoOperator(), SessionControl(), run_log)
-        result = replay_any(loaded, dict(params), surface, policy_for(loaded, allowed_hosts), escalator, run_log,
+        result = run_replay(loaded, dict(params), surface, policy_for(loaded, allowed_hosts), escalator, run_log,
                             purpose=STABILITY)
     except Exception as error:
         record["error"] = redact(f"{type(error).__name__}: {error}", secrets)
@@ -132,7 +132,7 @@ def count_drift_signals(run_log: RunLog) -> int:
     return count
 
 
-def build_report(stability_id: str, artifact_path, loaded: Artifact | ArtifactV2, params: dict, sensitive: list[str],
+def build_report(stability_id: str, artifact_path, loaded: Artifact, params: dict, sensitive: list[str],
                  runs: int, records: list[dict]) -> dict:
     digest = sha256_of(artifact_path)
     return {
@@ -229,7 +229,7 @@ def verify_report(report: dict) -> dict:
     return recomputed
 
 
-def selector_assignment(loaded: Artifact | ArtifactV2, params: dict) -> dict | None:
+def selector_assignment(loaded: Artifact, params: dict) -> dict | None:
     """The values of the artifact's selector inputs for this invocation; sensitive ones are never written."""
     selectors = [name for name, spec in loaded.inputs.items() if spec.get("selector") and not spec.get("sensitive")]
     assignment = {name: str(params[name]) for name in selectors if name in params}

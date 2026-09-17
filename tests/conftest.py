@@ -1,7 +1,7 @@
 """Keep test runs from writing into the real logs/ and evidence/ folders."""
 import pytest
 
-from src.cua import artifact, evidence, graph_replay, replay
+from src.cua import artifact, evidence, replay
 
 
 @pytest.fixture(autouse=True)
@@ -10,5 +10,5 @@ def isolated_output_dirs(tmp_path, monkeypatch):
     monkeypatch.setattr(evidence, "EVIDENCE_DIR", tmp_path / "evidence")
     monkeypatch.setattr(artifact, "ARTIFACTS_DIR", tmp_path / "artifacts")
     monkeypatch.setattr(replay, "CHECKPOINT_TIMEOUT_S", 0.0)   # the fake surface never needs to settle
-    monkeypatch.setattr(graph_replay, "GUARD_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(replay, "GUARD_TIMEOUT_S", 0.0)
     yield tmp_path
