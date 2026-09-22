@@ -1,0 +1,42 @@
+{
+  "magnitudes": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "number",
+      "pattern": "^(\\d+(?:\\.\\d+)?)"
+    }
+  },
+  "locations": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "^([\\s\\S]+)$"
+    }
+  },
+  "event_times": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "^([\\s\\S]+)$"
+    }
+  },
+  "depths": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "number",
+      "pattern": "^(\\d+(?:\\.\\d+)?)"
+    }
+  }
+}

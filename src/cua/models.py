@@ -17,6 +17,11 @@ class Element:
     ref: str = ""                 # opaque handle owned by the Surface that observed it; never stored in artifacts
     states: dict = field(default_factory=dict)  # computed states when known: {"checked": "true", "expanded": "false"}
     source: str = "dom"           # which perception source(s) produced it: dom | ax | dom+ax; runtime only
+    # Runtime-only evidence for the safety policy, never written into an artifact:
+    native: str = ""              # the platform control kind: "button:submit", "button:button", "a", "input:radio", ...
+    landmark: str = ""            # role of the nearest enclosing dialog, menu, panel or region, if any
+    landmark_name: str = ""       # that container's bounded heading or label, masked like any text
+    dismisses: bool = False       # browser metadata says this control closes its dialog or popover
 
 
 @dataclass
@@ -25,7 +30,13 @@ class Observation:
     elements: list[Element]
     dialog: str | None = None     # a modal is covering the screen (interstitial, error, notice)
 
-ActionKind = Literal["navigate", "click", "type", "extract", "done", "stuck"]
+# Every kind of decision the runtime can carry: surface actions (navigate, back, click, type, extract,
+# extract_many), the choice of a verified library segment (reuse_candidate), and the planner's two
+# signals (done, stuck). The artifact records only the surface actions; the policy allows only those.
+ActionKind = Literal["navigate", "back", "click", "type", "select", "extract", "extract_many", "reuse_candidate",
+                     "done", "stuck"]
+# How an extraction lands in the outputs: "set" assigns a scalar output once; "append" adds to a list output.
+OUTPUT_MODES = ("set", "append")
 
 @dataclass
 class Action:
@@ -33,7 +44,8 @@ class Action:
     kind: ActionKind
     target: Element | None = None
     value: str | None = None      # text to type / url to navigate
-    output_name: str | None = None  # for extract
+    output_name: str | None = None  # for extract / extract_many
+    targets: list[Element] = field(default_factory=list)   # for extract_many: the selected elements, in order
     pattern: str | None = None    # for extract: regex whose first group (or whole match) is the value
     optional: bool = False        # for extract: the value may legitimately be absent for some inputs
     expect: str | None = None     # text the planner expects to see after acting (becomes the checkpoint)
@@ -41,6 +53,19 @@ class Action:
     outcomes: list[dict] = field(default_factory=list)  # declared on "done": known non-happy-path states
     result: str = ""              # filled in by the agent after acting ("ok", "denied: ...", "expected X not seen")
     stuck_cause: str = ""         # for "stuck": perception (a needed control is not in the list) | planner | provider
+    candidate_id: str | None = None   # for "reuse_candidate": the verified segment chosen from those offered
+    output_mode: str = "set"      # for extract / extract_many: set (assign once) | append (add to a list output)
+    checkpoint: dict | None = None  # filled in by verification: the proof this action left, if any
+    performed_on: Element | None = None   # the enclosing control the surface activated instead of the target, if any
+    unverified: bool = False
+    # an explicit expectation was contradicted, though other evidence proved the action took effect
+    expectation_contradicted: bool = False
+    # the acted control's field-group state read immediately before the action; runtime only, never stored
+    committed_before: dict | None = None
+    # whether the acted control read as selected before the action; runtime only, never stored
+    selected_before: dict | None = None
+    # the selection-transition verdict, asked once after the action: False until asked, then the proof or None
+    selection_proof: dict | None | bool = False      # performed, its explicit expectation contradicted, and nothing proves an effect
 
 
 @dataclass
@@ -71,12 +96,16 @@ class VisualTarget:
 
 @dataclass
 class VisualDecision:
-    """One visual proposal: visual_click | visual_type | no_target, or unavailable when the provider cannot see."""
+    """One visual proposal: visual_click | visual_type | visual_extract | no_target, or unavailable when the
+    provider cannot see. A visual_extract names a declared output and the screenshot boxes to read it from, in
+    output order; what the model itself read there is never carried, the page supplies the value."""
     kind: str
     target: VisualTarget | None = None
     value: str | None = None      # for visual_type; may contain {{param}} placeholders
     reason: str = ""
     rejected: str | None = None   # why a proposal was refused by validation (out of range, low confidence, ...)
+    output_name: str | None = None            # for visual_extract
+    boxes: list[VisualTarget] = field(default_factory=list)   # for visual_extract: one box per value, in order
 
 
 class TransientError(Exception):
@@ -85,6 +114,36 @@ class TransientError(Exception):
     def __init__(self, message: str, url: str | None = None):
         super().__init__(message)
         self.url = url  # page that failed to load, so replay can reload it before retrying
+
+
+PERFORMED_STATES = ("no", "yes", "unknown")
+MAX_EXTRACT_TARGETS = 20      # the most elements one extract_many may read into one ordered list
+MAX_TOKEN_TEXT = 120          # a selected token longer than this is page copy, not a committed value
+# Structured causes an adapter may attach to an action failure: the target cannot take the action and no
+# enclosing control can either; or a selection could not be made because more than one option (or popup) fits.
+ACTION_FAILURE_CAUSES = ("unactionable_target", "ambiguous_selection", "stale_target")
+
+
+class ActionError(TransientError):
+    """A surface action (click, type, navigate) did not complete.
+
+    `performed` says what the surface knows about the physical action: "no" (it was never
+    dispatched: an actionability check or a pre-check failed first), "yes" (it was dispatched but
+    did not have the intended effect) or "unknown" (it may or may not have reached the page).
+    Callers decide what is safe to repeat from that, never from the message. `url` is set only
+    when reloading the page is a sensible recovery. `cause` names a structured reason when the
+    adapter has one: "unactionable_target" means the trial proved the control cannot take a
+    pointer action and no enclosing control is provably actionable either.
+    """
+
+    def __init__(self, message: str, performed: str = "unknown", url: str | None = None, cause: str | None = None):
+        if performed not in PERFORMED_STATES:
+            raise ValueError(f"performed must be one of {PERFORMED_STATES}, got {performed!r}")
+        if cause is not None and cause not in ACTION_FAILURE_CAUSES:
+            raise ValueError(f"cause must be one of {ACTION_FAILURE_CAUSES}, got {cause!r}")
+        super().__init__(message, url=url)
+        self.performed = performed
+        self.cause = cause
 
 
 # ---------- artifact (the capability contract) ----------
@@ -132,10 +191,12 @@ class GraphEdge:
 @dataclass
 class GraphAction:
     """What an action node does on the surface; its identity, effect and retry policy live on the node."""
-    action: str                   # click | type | navigate | extract
+    action: str                   # click | type | select | navigate | back | extract | extract_many
     target: Locator | None
-    value: str | None = None      # may contain {{param}} placeholders; the output name for extract
-    checkpoint: dict | None = None  # {"text_contains": "..."} — asserted after the action
+    value: str | None = None      # may contain {{param}} placeholders; the output name for extract(_many)
+    checkpoint: dict | None = None  # {"text_contains": "..."} or {"url_contains": "..."} — asserted after the action
+    targets: list[Locator] | None = None   # extract_many: one ladder per selected element, in output order
+    mode: str | None = None       # extract(_many): "append" adds to a list output; None or "set" assigns once
 
 
 @dataclass
@@ -213,6 +274,31 @@ class ReusePlan:
 
 
 @dataclass
+class ReuseCandidate:
+    """A verified segment of an approved artifact whose entry state holds on the current screen.
+
+    What the planner sees when choosing between reuse and a novel action. Inputs and outputs are
+    named only; no parameter value ever appears here. `node_ids` are the source's action nodes
+    the segment would run, in order.
+    """
+    candidate_id: str
+    source_name: str
+    source_version: int
+    source_digest: str
+    source_path: str
+    start_node: str
+    description: str
+    required_inputs: list[str]
+    outputs: list[str]
+    outline: list[str]
+    entry_condition: dict
+    ending_condition: dict
+    effects: list[str]
+    action_count: int
+    node_ids: list[str]
+
+
+@dataclass
 class ReusePrefix:
     """What a successful reuse hands to discovery: the executed action nodes renumbered, their recoverable
     outcomes and outputs, and the provenance to record. Parameter values never appear here."""
@@ -263,8 +349,22 @@ class InterventionRequest:
 
 
 @dataclass
+class HumanAction:
+    """One surface action a person performed during a handoff, as the runtime saw it: what was done, on which
+    perceived control, the screen before and after, and whether it certainly completed. Discovery records it
+    as an ordinary action node; replay keeps it as intervention evidence only. Never serialized as such."""
+    kind: str                     # navigate | click | type
+    target: Element | None
+    value: str | None             # the url or the typed text, concrete; parameterized only when recorded
+    before: Observation
+    after: Observation | None     # None when the screen could not be read afterwards
+    performed: str = "yes"        # "yes" | "unknown": a dispatched action whose outcome the surface lost
+
+
+@dataclass
 class InterventionResult:
     resolved: bool
-    human_actions: list[dict]
+    human_actions: list[dict]     # redacted evidence records, logged
     note: str = ""
     disposition: str = "resume"   # resume | restart | abort | approve | deny — what automation should do next
+    performed: list = field(default_factory=list)   # HumanAction records in execution order; runtime only

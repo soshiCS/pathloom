@@ -141,7 +141,7 @@ def test_accessibility_failure_falls_back_to_the_projection(reloaded, monkeypatc
     assert by_name(observation, "link", "Details").source == "dom"
     assert any(e.role == "text" and e.text == "Email alerts" for e in observation.elements)   # no upgrade
     assert not any(e.name == "Newsletter" for e in observation.elements)                    # not projected
-    assert all(e.states == {} for e in observation.elements)
+    assert all(set(e.states) <= {"disabled", "covered"} for e in observation.elements)   # the projection's own evidence only
     monkeypatch.undo()
     assert by_name(reloaded.observe(), "checkbox", "Newsletter").source == "ax"               # recovered
     assert reloaded.last_accessibility_error is None
@@ -165,7 +165,7 @@ def test_a_failure_after_the_tree_was_read_returns_the_untouched_projection(relo
     fallback = reloaded.observe()
     assert reloaded.last_accessibility_error == "RuntimeError: enrichment lost the page"
     assert snapshot(fallback) == projection                           # ... and none of them leaked out
-    assert all(e.states == {} and e.source == "dom" for e in fallback.elements)
+    assert all(set(e.states) <= {"disabled", "covered"} and e.source == "dom" for e in fallback.elements)
     assert not any(e.name == "Newsletter" for e in fallback.elements)
     assert by_name(fallback, "link", "Details").source == "dom"
     monkeypatch.undo()

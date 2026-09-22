@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from src.cua.artifact import build_linear, classify_effect, classify_retry_safety, linear_path
-from src.cua.escalation import Escalator, SessionControl
+from src.cua.escalation import Escalator, SessionControl, perform_human_action
 from src.cua.evidence import RunLog
-from src.cua.models import (Action, Artifact, Element, GraphAction, GraphEdge, GraphNode, Guard,
+from src.cua.models import (Action, ActionError, Artifact, Element, GraphAction, GraphEdge, GraphNode, Guard,
                             InterventionRequest, InterventionResult, Locator, Observation, TransientError)
 from src.cua.policy import Policy
 
@@ -152,13 +152,19 @@ class RecordingOperator:
     def handle(self, request: InterventionRequest, surface) -> InterventionResult:
         self.requests.append(request)
         self.surfaces.append(surface)
-        actions = []
+        actions, performed = [], []
         for kind, name, *rest in self.manual:
+            if kind == "navigate":
+                performed.append(perform_human_action(surface, "navigate", None, name))
+                actions.append({"action": "navigate", "value": name})
+                continue
             element = next(e for e in surface.observe().elements if e.name == name)
-            if kind == "click":
-                surface.click(element)
-            else:
-                surface.type(element, rest[0])
+            try:
+                performed.append(perform_human_action(surface, kind, element, rest[0] if rest else None))
+            except ActionError as error:          # nothing happened: the operator sees the error, nothing is recorded
+                actions.append({"action": kind, "target": name, "error": str(error)})
+                continue
             actions.append({"action": kind, "target": name})
         resolved = self.disposition in ("resume", "restart", "approve")
-        return InterventionResult(resolved=resolved, human_actions=actions, note="test", disposition=self.disposition)
+        return InterventionResult(resolved=resolved, human_actions=actions, note="test", disposition=self.disposition,
+                                  performed=performed)

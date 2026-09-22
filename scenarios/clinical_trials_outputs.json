@@ -1,0 +1,52 @@
+{
+  "titles": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "(.+)"
+    }
+  },
+  "nct_numbers": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "(NCT\\d{8})"
+    }
+  },
+  "sponsors": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "(.+)"
+    }
+  },
+  "enrollments": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "integer",
+      "pattern": "(\\d[\\d,]*)"
+    }
+  },
+  "locations": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "(Boston,\\s*Massachusetts.+)"
+    }
+  }
+}

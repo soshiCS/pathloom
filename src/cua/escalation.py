@@ -15,7 +15,7 @@ import sys
 import time
 from typing import Protocol, TextIO
 
-from .models import InterventionRequest, InterventionResult
+from .models import ActionError, HumanAction, InterventionRequest, InterventionResult, TransientError
 from .policy import redact
 from .surface import Surface
 
@@ -82,6 +82,7 @@ class ConsoleOperator:
     def __init__(self, input_stream: TextIO | None = None, output_stream: TextIO | None = None):
         self.input = input_stream or sys.stdin
         self.output = output_stream or sys.stdout
+        self.performed: list[HumanAction] = []
 
     def say(self, text: str) -> None:
         print(text, file=self.output, flush=True)
@@ -101,15 +102,18 @@ class ConsoleOperator:
             self.say(HELP)
             self.show_controls(surface)
         actions: list[dict] = []
+        self.performed = []
         while True:
             self.say("operator> ")
             line = self.input.readline()
             if not line:  # stdin closed: treat as abort so the run never hangs
-                return InterventionResult(False, actions, "operator input closed", disposition="abort")
+                return InterventionResult(False, actions, "operator input closed", disposition="abort",
+                                          performed=list(self.performed))
             command, _, argument = line.strip().partition(" ")
             if command in ("resume", "restart", "abort", "approve", "deny"):
                 resolved = command in ("resume", "restart", "approve")
-                return InterventionResult(resolved, actions, f"operator chose {command}", disposition=command)
+                return InterventionResult(resolved, actions, f"operator chose {command}", disposition=command,
+                                          performed=list(self.performed))
             try:
                 record = self.run_command(command, argument, surface)
             except Exception as error:  # a bad command must not end the handoff
@@ -128,25 +132,60 @@ class ConsoleOperator:
             self.say(f"  [{index}] {element.role}: {label[:80]}")
 
     def run_command(self, command: str, argument: str, surface: Surface) -> dict | None:
-        """Execute one operator command on the live surface; return a redacted record of it."""
+        """Execute one operator command on the live surface; return a redacted record of it. The structured
+        record of a performed action is kept in `self.performed` for the discovery loop to record."""
         if command == "observe":
             self.show_controls(surface)
             return None
         if command == "navigate":
-            surface.navigate(argument)
+            done = perform_human_action(surface, "navigate", None, argument)
+            self.performed.append(done)
+            if done.performed != "yes":
+                self.say("warning: the navigation may not have completed; discovery cannot record it")
             return {"action": "navigate", "value": argument}
         if command in ("click", "type"):
             index_text, _, text = argument.partition(" ")
             element = surface.observe().elements[int(index_text)]
+            done = perform_human_action(surface, command, element, text if command == "type" else None)
+            self.performed.append(done)
+            if done.performed != "yes":
+                self.say(f"warning: the {command} may not have completed; discovery cannot record it")
             if command == "click":
-                surface.click(element)
                 return {"action": "click", "target": f"{element.role} '{element.name or element.text}'"}
-            surface.type(element, text)
             # Redact by field name so a password typed by the operator never reaches the log.
             value = redact({element.name: text})[element.name]
             return {"action": "type", "target": f"{element.role} '{element.name}'", "value": value}
         self.say(HELP)
         return None
+
+
+def perform_human_action(surface: Surface, kind: str, element, value: str | None = None) -> HumanAction:
+    """Perform one operator action and describe it as the runtime saw it (see `HumanAction`).
+
+    A failure the surface proves happened before anything was dispatched is raised as is: nothing to record.
+    A failure after dispatch, or a load failure, is a performed action with an unknown outcome.
+    """
+    before = surface.observe()
+    try:
+        if kind == "navigate":
+            surface.navigate(value or "")
+        elif kind == "click":
+            surface.click(element)
+        elif kind == "type":
+            surface.type(element, value or "")
+        else:
+            raise ValueError(f"unsupported human action {kind!r}")
+    except ActionError as error:
+        if error.performed == "no":
+            raise
+        return HumanAction(kind=kind, target=element, value=value, before=before, after=None, performed="unknown")
+    except TransientError:
+        return HumanAction(kind=kind, target=element, value=value, before=before, after=None, performed="unknown")
+    try:
+        after = surface.observe()
+    except TransientError:
+        after = None
+    return HumanAction(kind=kind, target=element, value=value, before=before, after=after)
 
 
 class Escalator:

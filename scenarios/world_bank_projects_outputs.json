@@ -1,0 +1,37 @@
+{
+  "project_names": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {"type": "string", "pattern": "^(.+)$"}
+  },
+  "project_ids": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {"type": "string", "pattern": "^(.+)$"}
+  },
+  "approval_dates": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {"type": "string", "pattern": "^(.+)$"}
+  },
+  "project_statuses": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {"type": "string", "pattern": "^(.+)$"}
+  },
+  "total_commitments": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {"type": "string", "pattern": "^(.+)$"}
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "award_ids": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "(\\S.*\\S|\\S)"
+    }
+  },
+  "recipients": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "(\\S.*\\S|\\S)"
+    }
+  },
+  "award_amounts": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "(\\$[\\d,]+(?:\\.\\d{2})?)"
+    }
+  },
+  "awarding_agencies": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "(\\S.*\\S|\\S)"
+    }
+  },
+  "start_dates": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "(\\d{4}-\\d{2}-\\d{2}|\\d{1,2}/\\d{1,2}/\\d{2,4}|\\d{1,2} \\w+ \\d{4}|\\w+ \\d{1,2},? \\d{4})"
+    }
+  }
+}

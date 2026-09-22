@@ -79,9 +79,9 @@ class SpyPlanner(ScriptedPlanner):
         super().__init__(script)
         self.observations: list[Observation] = []
 
-    def decide(self, goal, params, observation, history):
+    def decide(self, goal, params, observation, history, candidates=()):
         self.observations.append(observation)
-        return super().decide(goal, params, observation, history)
+        return super().decide(goal, params, observation, history, candidates)
 
 
 def after_login_script():
@@ -128,11 +128,14 @@ def test_approved_prefix_runs_without_a_planner_and_discovery_continues_on_that_
     assert [n.id for n in path_nodes] == [f"s{i}" for i in range(1, 16)]              # renumbered, contiguous
     assert path_nodes[3].action.checkpoint == {"text_contains": "Products"} and path_nodes[1].action.value == "{{username}}"
     assert [o["code"] for o in artifact.outcomes if o["kind"] == "recoverable"] == ["dismiss_cookie_notice"]
-    prov = artifact.provenance["reuse"]
-    assert prov == {"source_name": "shop_login", "source_version": 1, "source_schema_version": "2.0",
-                    "source_digest": sha256_of(path), "source_path": str(path),
-                    "executed_path": ["s1", "s2", "s3", "s4"], "imported_nodes": 4, "reuse_run_id": log.run_id,
-                    "planner_decisions": 12}
+    [prov] = artifact.provenance["reuses"]
+    assert prov == {"mode": "forced_prefix", "candidate_id": None, "source_name": "shop_login", "source_version": 1,
+                    "source_digest": sha256_of(path), "source_path": str(path), "start_node": "s1",
+                    "executed_path": ["s1", "s2", "s3", "s4"], "imported_nodes": 4,
+                    "imported_as": ["s1", "s2", "s3", "s4"], "reuse_run_id": log.run_id, "planner_turn": 0,
+                    "entry_condition": {"entry_url": ENTRY}, "ending_checkpoint": {"text_contains": "Products"},
+                    "result": "succeeded"}
+    assert artifact.provenance["planner_decisions"] == 12
     text = log.path.read_text()
     for event in ("reuse_preflight_passed", "reuse_started", "reuse_step_executed", "reuse_succeeded",
                   "discovery_resumed_after_reuse"):
@@ -196,7 +199,7 @@ def test_branching_prefix_imports_only_the_selected_branch():
     assert path[5].action.value == "{{cart_url}}"                                      # the url branch ...
     assert not any(n.action.action == "click" and n.action.target
                    and n.action.target.strategies[0].get("name") == "cart" for n in path)   # ... not the link branch
-    assert artifact.provenance["reuse"]["executed_path"] == ["s1", "s2", "s3", "s4", "s5", "s7"]
+    assert artifact.provenance["reuses"][0]["executed_path"] == ["s1", "s2", "s3", "s4", "s5", "s7"]
     assert [n.id for n in path] == [f"s{i}" for i in range(1, len(path) + 1)]         # renumbered on import
     assert all(n.kind == "action" for n in artifact.nodes[:-1]) and artifact.nodes[-1].kind == "terminal"
     result, _ = replays(artifact, params)
@@ -288,7 +291,7 @@ def test_a_failing_prefix_closes_the_dirty_session_and_discovery_restarts_on_a_f
     assert first.actions[:4] == [("navigate", ENTRY), ("type", "Username", "standard_user"),
                                  ("type", "Password", "secret_sauce"), ("click", "Login", "")]  # dirty: 4 actions ran
     assert planner.observations[0].url == ENTRY and second.screen == "overview"        # discovery began afresh
-    assert "reuse" not in artifact.provenance and len(linear_path(artifact)) == 15
+    assert "reuses" not in artifact.provenance and len(linear_path(artifact)) == 15
     failed = events(log, "reuse_failed")[0]
     assert failed == {**failed, "status": "failure", "outcome_code": "checkpoint_not_met", "step_id": "s4",
                       "executed_path": ["s1", "s2", "s3"], "performed_attempts": 4}
@@ -305,7 +308,7 @@ def test_a_business_outcome_from_the_prefix_also_falls_back():
     assert [s.closes for s in sessions.created] == [1, 1]
     assert events(log, "reuse_failed")[0]["status"] == "business_outcome"
     assert events(log, "reuse_failed")[0]["outcome_code"] == "user_locked_out"
-    assert "reuse" not in artifact.provenance
+    assert "reuses" not in artifact.provenance
     assert linear_path(artifact)[3].action.checkpoint == {"text_contains": "locked out"}
 
 
@@ -324,7 +327,7 @@ def test_a_prefix_that_cannot_be_imported_closes_the_first_session_and_falls_bac
     assert first.closes == 1 and second.closes == 1 and first.logged_in and not second.cart == []
     assert events(log, "reuse_import_failed")[0]["error"].startswith("KeyError")
     assert events(log, "reuse_succeeded") == [] and events(log, "reuse_fallback_started")
-    assert planner.observations[0].url == ENTRY and "reuse" not in artifact.provenance
+    assert planner.observations[0].url == ENTRY and "reuses" not in artifact.provenance
     assert len(linear_path(artifact)) == 15 and replays(artifact)[0].status == "success"
 
 
@@ -387,8 +390,8 @@ def test_campaign_scenarios_reuse_the_prefix_independently_and_merge():
     assert [s["node_path"][:5] for s in graph.provenance["scenarios"]] == [["d1", "s1", "s2", "s3", "s4"]] * 3
     for record in result.scenarios:
         trace = json.loads(open(record["trace"]).read())
-        assert trace["provenance"]["reuse"]["source_name"] == "shop_login"
-        assert trace["provenance"]["reuse"]["imported_nodes"] == 4 and trace["schema_version"] == "2.0"
+        assert trace["provenance"]["reuses"][0]["source_name"] == "shop_login"
+        assert trace["provenance"]["reuses"][0]["imported_nodes"] == 4 and trace["schema_version"] == "2.0"
         assert "secret_sauce" not in open(record["trace"]).read()
         assert "secret_sauce" not in open(record["evidence"] + "/run.jsonl").read()
     assert "secret_sauce" not in open(result.artifact_path).read()

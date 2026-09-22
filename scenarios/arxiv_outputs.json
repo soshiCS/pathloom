@@ -1,0 +1,42 @@
+{
+  "titles": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "^(.+)$"
+    }
+  },
+  "arxiv_ids": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "^(.+)$"
+    }
+  },
+  "primary_subjects": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "^(.+)$"
+    }
+  },
+  "submitted_dates": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "^(.+)$"
+    }
+  }
+}

@@ -41,8 +41,11 @@ def test_locators_are_parameterized_and_substituted():
     locator = Locator(strategies=[{"kind": "role", "role": "button", "name": "Add to cart", "context": "Sauce Labs Backpack"},
                                   {"kind": "css", "selector": "button:Add to cart"}])
     generic = parameterize_locator(locator, PARAMS)
-    assert generic.strategies == [{"kind": "role", "role": "button", "name": "Add to cart", "context": "{{product_name}}"}]
-    # The structural rung is dropped: it would point at the discovery-time product for any input.
+    assert generic.strategies == [
+        {"kind": "role", "role": "button", "name": "Add to cart", "context": "{{product_name}}"},
+        {"kind": "css", "selector": "button:Add to cart"},
+    ]
+    # Replay may use the structural rung only to disambiguate matches of the semantic rung.
     concrete = substitute_locator(generic, {**PARAMS, "product_name": "Sauce Labs Bike Light"})
     assert concrete.strategies[0]["context"] == "Sauce Labs Bike Light"
 
@@ -71,10 +74,10 @@ def test_build_linear_emits_a_valid_chain_ending_in_the_success_terminal():
 
 
 def test_effect_defaults_follow_the_action_kind_and_the_policy_verdict():
-    assert classify_effect("navigate", risky=False) == "none" and classify_effect("extract", risky=False) == "none"
-    assert classify_effect("click", risky=False) == "reversible" and classify_effect("type", risky=False) == "reversible"
-    assert classify_effect("click", risky=True) == "irreversible"
-    assert classify_effect("hover", risky=False) == "unknown"                    # unclassifiable
+    assert classify_effect("navigate", risk=False) == "none" and classify_effect("extract", risk=False) == "none"
+    assert classify_effect("click", risk=False) == "reversible" and classify_effect("type", risk=False) == "reversible"
+    assert classify_effect("click", risk=True) == "irreversible"
+    assert classify_effect("hover", risk=False) == "unknown"                    # unclassifiable
 
 
 def test_retry_defaults_are_conservative():
@@ -184,7 +187,7 @@ def test_action_nodes_carry_id_effect_and_retry_once():
     data = to_dict(checkout_artifact(extra_node=finish_node()))
     node = next(n for n in data["nodes"] if n["id"] == "s16")
     assert list(node) == ["id", "kind", "action", "effect", "retry_safety", "status", "outcome_code"]
-    assert list(node["action"]) == ["action", "target", "value", "checkpoint"]
+    assert list(node["action"]) == ["action", "target", "value", "checkpoint", "targets", "mode"]
     assert node["effect"] == "irreversible" and node["retry_safety"] == "never_retry"
     assert "id" not in node["action"] and "risk" not in node["action"]
     assert '"risk"' not in json.dumps(data)

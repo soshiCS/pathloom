@@ -95,9 +95,9 @@ def test_password_never_reaches_the_planner_the_artifact_or_the_log():
     seen = {}
 
     class SpyPlanner(ScriptedPlanner):
-        def decide(self, goal, params, observation, history):
+        def decide(self, goal, params, observation, history, candidates=()):
             seen.update(params)
-            return super().decide(goal, params, observation, history)
+            return super().decide(goal, params, observation, history, candidates)
 
     log = RunLog("discovery", secrets=("secret_sauce",))
     surface = FakeSurface()
@@ -146,14 +146,16 @@ def test_repeated_denials_stop_discovery():
         run_discovery(script)
 
 
-def test_unmet_expectation_keeps_the_step_but_drops_its_checkpoint():
+def test_an_unmet_expectation_keeps_a_step_that_other_evidence_proves():
     script = checkout_script()
     script[3] = ScriptedStep("click", "button", "Login", expect="Welcome back")   # wrong guess, real navigation
     artifact, log = run_discovery(script)
-    assert '"expectation_failed"' in log.path.read_text()
+    text = log.path.read_text()
+    assert '"expectation_failed"' in text and '"action_effect_proven"' in text
     login = linear_path(artifact)[3]
-    assert login.action.action == "click" and login.action.checkpoint is None
-    assert (login.effect, login.retry_safety) == ("reversible", "never_retry")   # unverifiable: never repeated blindly
+    # the guess was wrong, but the page address changed, so that stands as the proof instead
+    assert login.action.action == "click" and login.action.checkpoint == {"url_contains": "/inventory.html"}
+    assert (login.effect, login.retry_safety) == ("reversible", "verify_before_retry")
 
 
 def test_slow_entry_page_is_retried_not_fatal(monkeypatch):

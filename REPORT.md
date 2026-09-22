@@ -39,16 +39,21 @@ transcript, which keeps artifacts provider-independent but makes discovery slowe
 The artifact is a capability graph (`schema_version: "2.0"`; the `N` in `name.vN.json` is the
 capability revision). An artifact carries
 the contract fields, `inputs` (typed, `sensitive`, `selector` and `required_when` conditions),
-`outputs` (type, requiredness and the regex that reads each value), declared `outcomes`, a
-`success` checkpoint and `provenance`, and the flow as `entry_node`, `nodes` and `edges`. A
+`outputs` (type, requiredness and the regex that reads each value; or `list` with an `items`
+rule and optional `min_items`/`max_items` bounds, read by an `extract_many` node from an ordered
+list of locator ladders, or grown one page at a time by extraction nodes marked `mode: "append"`),
+declared
+`outcomes`, a `success` checkpoint and `provenance`, and the flow as `entry_node`, `nodes` and
+`edges`. Actions are `navigate`, `back` (the browser history), `click`, `type`, `extract` and
+`extract_many`; a checkpoint is `text_contains` or `url_contains`. A
 single discovery emits a linear graph (action nodes joined by `always` edges into the `success`
 terminal); a campaign merges linear graphs into a branching one. An action node carries what it
 does plus an `effect` (`none`, `reversible`, `irreversible`, `unknown`) and a `retry_safety`,
-both assigned at discovery from fixed rules (navigation and extraction have no effect; an allowed
-click or type is reversible; a control the policy calls risky is irreversible; anything
+both assigned at discovery from fixed rules (navigation, back and extraction have no effect; an
+allowed click or type is reversible; a control the policy calls risky is irreversible; anything
 unclassifiable is unknown; extraction and plain navigation are safe to repeat, a checkpointed
-reversible action is verified before a retry, a blind click or type and every irreversible or
-unknown action are never retried); decision nodes branch on typed guards
+reversible action or back is verified before a retry, a blind click, type or back and every
+irreversible or unknown action are never retried); decision nodes branch on typed guards
 (`input_equals`, `text_visible`, `url_matches`, `element_present`, `dialog_contains`, `always`
 as the fallback); terminal nodes end as `success`, `business_outcome` or `failure`. Locators are
 ladders, most stable first, and are parameterized like values; a parameterized ladder never
@@ -71,7 +76,27 @@ with its code; a node without a checkpoint hands the screen to its edges; a time
 Absence outcomes ("the product is not listed") are judged only by the node that looks for the
 item. Nine live replays of the three paths agreed with each other and with discovery to the cent.
 
-Transient loads are retried with backoff and a reload, but each graph node's `retry_safety`
+During discovery a surface action that cannot complete is classified by the adapter as not
+performed, performed without effect, or unknown: a not-performed click returns to the planner
+with the reason in its history and is bounded per screen before the stuck handoff; an unknown
+outcome is proven through the planner's stated expectation or handed to a person, and an
+irreversible action is never repeated automatically. The classification comes from the phase
+that failed (the explicit actionability trial and inspection, or the real action), never from
+error wording. Native radios and checkboxes are activated through their browser-associated labels
+under Playwright's normal actionability checks, then the input, then a guarded keyboard press
+allowed only when the obstruction belongs to the same choice structure; never forced. Controls that are hidden, inert or clipped are not listed, and disabled or covered ones are
+marked; a `select` action chooses from native selects, comboboxes and autocomplete fields by
+option semantics and verifies acceptance; a planner repeating itself without progress is warned
+once and then stopped through the stuck handoff. Perception keeps
+visible leaf text whatever its tag and supplements it from the accessibility tree within a bound;
+a value still absent from the list can be extracted through a bounded, grounded visual fallback in
+which the model only proposes boxes and the page element under each box supplies the value, parsed
+by the contract and replayed by structure or by an exact reading point. Visible
+text that cannot take a click itself is clicked through the nearest enclosing control that is
+actionable by its own semantics (native control, anchor, bound label, explicit interactive
+role), recorded as that control; with no such control the failure is a structured
+`unactionable_target`, eligible for the bounded vision fallback and otherwise a handoff. Transient
+loads are retried with backoff and a reload, but each graph node's `retry_safety`
 decides whether an action that may already have happened is repeated: `safe` repeats,
 `verify_before_retry` re-checks the checkpoint first and asks a person when it cannot tell,
 `never_retry` never repeats. Known dialogs are cleared by declared recoveries; unknown ones go to
@@ -81,6 +106,29 @@ code, or `failure` with the node, what was expected and what was observed, plus 
 `performed_attempts`, every physical action attempted including repeats (diagnostic only; a
 restart clears the path but not the count). Recoveries and locator fallbacks are counted and
 reported by stability runs rather than hidden.
+
+A checkpoint is recorded only when it is evidence: expected text absent before the action and
+present after it, a typed value shown back, or a page change proven by the URL; text that was
+already on screen (a site-wide heading) is never recorded as proof. An expectation the screen
+contradicted is not quietly cleared and the action recorded as done: discovery looks for
+independent proof (a safe address change, a native control state that flipped, the acted control itself
+becoming selected by browser state rather than styling, judged from native, accessibility, attribute,
+associated-control or exact class-token evidence, and considered for every click whatever the planner
+expected, or a commit inside the
+acted control's own field group where a field gave up its value and exactly one new removable or selected
+token carries it, counted as one logical token per removal control however deeply the page nests it),
+records that instead when it exists, and otherwise classifies the action `action_effect_unverified`, records no
+node for it, and refuses to dispatch it again before measurable progress or a person's decision.
+Outputs are assigned once (a second `set` is refused before it runs) or
+grown in order with `append`, which replay rebuilds across pages and never duplicates on a retry.
+A direct discovery may declare its outputs up front (`--output-contract`, the same shape a campaign
+spec uses, with optional list cardinality); the contract then overrides whatever the planner
+proposes, an append beyond `max_items` is refused as "already complete", `done` is rejected with
+the names of the missing or incomplete outputs until every required output is complete, and a
+replay that reaches success re-validates its outputs against the same contract before reporting it.
+Model-provider failures are retried at one shared boundary, bounded, classified by status or
+exception class rather than message text, and logged per retry; a provider that stays down ends
+discovery with a concise project-owned error, saved evidence and a nonzero exit, never a traceback.
 
 ## 4. Heterogeneity & multi-tenant
 
@@ -113,14 +161,26 @@ with a bounding box and an expected text; the proposal is validated, policy-chec
 once and kept only if structured perception verifies it, with a small per-run budget and one
 attempt per unchanged screen. The recorded node keeps a coordinate rung bound to its viewport;
 replay never uses a model, uses the coordinates last, and refuses them in another viewport.
-Visual extraction is unsupported by design. A discovery may also open with an approved
-capability that performs its beginning: the prefix is preflighted (approved, digest, inputs,
-hosts, no irreversible action) before a browser exists, replayed on the live session with no
-model under a purpose that forces irreversible actions to be denied, and on success its executed
-path, taken from the engine's structured trace, becomes the opening nodes of the new
-self-contained artifact, each copied exactly with its effect and retry policy; on any failure,
-including a path that cannot be imported, the session is closed and discovery starts afresh.
-This is verified prefix reuse, never a cache of isolated clicks.
+Visual extraction is unsupported by design.
+
+Approved artifacts also form a verified library that every discovery composes from
+automatically: `library -> state-matched candidate retrieval -> planner chooses reuse or a novel
+action -> deterministic segment replay -> checkpoint verification -> nodes inlined into the new
+graph`. The catalog admits only approved, valid, same-surface artifacts whose file names match
+their contents; a candidate is a segment cut at verified boundaries (the entry, the state after a
+checkpointed action, a resolvable decision) whose entry state is proven on the current screen,
+that contains no irreversible or unknown action, has its inputs available and ends at a
+checkpoint, so an artifact is reusable from the middle. Before every planner decision the
+matching candidates are described by name only, and the planner's one tool call selects a
+`candidate_id` or an ordinary action; matching a screen is necessary but not sufficient, the
+segment must advance the goal, and the model never regenerates a segment's actions. A selected
+segment is replayed by the same engine with the irreversible policy forced to deny and its
+completed nodes are inlined exactly, so the new artifact is self-contained and several artifacts
+can be composed in one discovery, bounded by a budget, one attempt per segment per screen and a
+no-progress check. A failure before acting continues on the same session; after checkpointed
+actions the proven nodes are kept; an unproven physical action is never repeated and the session
+is restarted cleanly with the artifact excluded (or handed to an operator). A named forced prefix
+remains available as an override. This is composition of verified work, not a cache of clicks.
 
 Multi-tenant reuse is a layering the schema is shaped for but does not implement: a base
 artifact per vendor product, per-tenant `entry_url` and `allowed_hosts`, overlays for individual
@@ -146,7 +206,9 @@ was not recorded and the index says how to rehearse one.
 
 Host and control allowlists are checked before every action in both paths and an artifact cannot
 override them. Risk is layered: the policy's name-based classification of irreversible controls
-(`Finish`, `Pay`, `Delete`, ...), the node's declared `effect`, and the run's
+(`Finish`, `Pay`, `Delete`, ...; `Close` by its wording, and a bare `Close` by browser-derived
+evidence about its container: proven dismissal chrome is reversible, a container naming a resource
+closure is irreversible, no evidence is unknown and confirmed), the node's declared `effect`, and the run's
 `--irreversible-policy` (`deny`, `confirm`, `allow`); `unknown` always needs a person, a
 conflict between the policy and the graph resolves to the stricter view, and stability runs always
 use `deny`, so an irreversible node fails safely and stays ineligible. Sensitive inputs reach

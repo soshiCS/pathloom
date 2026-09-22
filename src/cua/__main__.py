@@ -27,12 +27,13 @@ from urllib.parse import urlparse
 from . import artifact as artifact_module
 from .agent import DEFAULT_MAX_VISION_ATTEMPTS, DiscoveryFailed
 from .approval import ApprovalError, approve
-from .campaign import CampaignError, CampaignFailed, load_spec, run_campaign
+from .campaign import CampaignError, CampaignFailed, load_output_contract, load_spec, run_campaign
 from .escalation import ConsoleOperator, Escalator, NoOperator, SessionControl
 from .evidence import RunLog
+from .library import DEFAULT_MAX_AUTO_REUSES
 from .lifecycle import (SUPERVISED, UNATTENDED, is_approved, load_artifact, not_approved_result, policy_for,
                         run_replay, write_bundle)
-from .planner import (DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL, ClaudePlanner,
+from .planner import (DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL, ClaudePlanner, PlannerUnavailable,
                       OpenAIPlanner)
 from .policy import Policy
 from .replay import DEFAULT_IRREVERSIBLE_POLICY, IRREVERSIBLE_POLICIES
@@ -76,12 +77,12 @@ def build_parser() -> argparse.ArgumentParser:
                       help="extra business outcome identified by on-screen text, e.g. invalid_credentials='do not match'")
     disc.add_argument("--missing-outcome", action="append", default=[], metavar="CODE=TEXT",
                       help="extra business outcome identified by absent text, e.g. product_not_found='{{product_name}}'")
+    disc.add_argument("--output-contract", default=None, metavar="PATH",
+                      help="JSON file declaring the outputs (name -> {type, required, pattern | items, min_items, "
+                           "max_items}, the artifact's own output shape); authoritative for discovery, and 'done' is "
+                           "accepted only when every declared output is complete")
     add_vision_options(disc)
-    reuse = disc.add_mutually_exclusive_group()
-    reuse.add_argument("--reuse-capability", metavar="NAME",
-                       help="open the discovery by replaying the newest approved artifact with this name")
-    reuse.add_argument("--reuse-artifact", metavar="PATH",
-                       help="open the discovery by replaying exactly this approved artifact")
+    add_reuse_options(disc)
     add_shared_run_options(disc)
 
     camp = commands.add_parser("discover-campaign",
@@ -95,6 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
                       help="provider model id (defaults to ANTHROPIC_MODEL or OPENAI_MODEL)")
     camp.add_argument("--max-steps", type=int, default=15)
     add_vision_options(camp)
+    add_reuse_options(camp, forced=False)
     add_shared_run_options(camp, params=False)
 
     rep = commands.add_parser("replay", help="deterministic replay of a saved artifact (no LLM)")
@@ -125,6 +127,24 @@ def add_vision_options(sub: argparse.ArgumentParser) -> None:
                           "masked viewport screenshots are sent to the provider and cost money)")
     sub.add_argument("--max-vision-attempts", type=int, default=DEFAULT_MAX_VISION_ATTEMPTS,
                      help=f"total visual attempts per discovery run (default: {DEFAULT_MAX_VISION_ATTEMPTS})")
+
+
+def add_reuse_options(sub: argparse.ArgumentParser, forced: bool = True) -> None:
+    """Automatic library reuse is on by default; the forced-prefix flags name one artifact to run first."""
+    sub.add_argument("--no-auto-reuse", action="store_true",
+                     help="do not offer verified segments of approved artifacts to the planner (automatic library "
+                          "reuse is on by default; a forced prefix, if given, still runs)")
+    sub.add_argument("--max-auto-reuses", type=int, default=DEFAULT_MAX_AUTO_REUSES, metavar="N",
+                     help=f"automatic segment reuses per discovery (default: {DEFAULT_MAX_AUTO_REUSES})")
+    sub.add_argument("--library-dir", default=None, metavar="DIR",
+                     help="directory of approved artifacts to reuse from (default: artifacts/)")
+    if forced:
+        reuse = sub.add_mutually_exclusive_group()
+        reuse.add_argument("--reuse-capability", metavar="NAME",
+                           help="force one initial prefix: replay the newest approved artifact with this name whole "
+                                "before the planner sees anything (automatic reuse may continue afterwards)")
+        reuse.add_argument("--reuse-artifact", metavar="PATH",
+                           help="force one initial prefix: replay exactly this approved artifact whole first")
 
 
 def add_shared_run_options(sub: argparse.ArgumentParser, params: bool = True, operator: bool = True) -> None:
@@ -159,15 +179,25 @@ def cmd_discover(args: argparse.Namespace) -> int:
     except ReuseError as error:
         print(f"Cannot reuse: {error}")
         return 2
+    output_contract = None
+    if getattr(args, "output_contract", None):
+        try:
+            output_contract = load_output_contract(args.output_contract)
+        except CampaignError as error:
+            print(f"Cannot load output contract: {error}")
+            return 2
     escalator = Escalator(make_operator(args), SessionControl(), log)
     try:
         planner = make_planner(args)
-        built = discover_with_reuse(lambda: PlaywrightSurface(headless=not args.headed, secrets=secrets), reuse,
+        built = discover_with_reuse(lambda: PlaywrightSurface(headless=not args.headed, secrets=secrets,
+                                                              allowed_hosts=list(policy.allowed_hosts)), reuse,
                                     goal=args.goal, name=args.name, params=params, planner=planner, policy=policy,
                                     escalator=escalator, log=log, entry_url=args.url, sensitive=sensitive,
                                     max_steps=args.max_steps, extra_outcomes=extra_outcomes,
                                     vision=planner if args.vision_fallback else None,
-                                    max_vision_attempts=args.max_vision_attempts)
+                                    max_vision_attempts=args.max_vision_attempts,
+                                    auto_reuse=not args.no_auto_reuse, max_auto_reuses=args.max_auto_reuses,
+                                    library_dir=args.library_dir, output_contract=output_contract)
         path = artifact_module.save_artifact(built, secrets)
         log.event("artifact_saved", path=str(path))
         evidence_dir = log.copy_to_evidence()
@@ -178,6 +208,10 @@ def cmd_discover(args: argparse.Namespace) -> int:
         print(f"Cannot reuse: {error}")
         return 2
     except DiscoveryFailed as error:
+        evidence_dir = log.copy_to_evidence()
+        print(f"\nDiscovery failed: {error}\nEvidence: {evidence_dir}")
+        return 2
+    except PlannerUnavailable as error:
         evidence_dir = log.copy_to_evidence()
         print(f"\nDiscovery failed: {error}\nEvidence: {evidence_dir}")
         return 2
@@ -192,10 +226,12 @@ def cmd_discover_campaign(args: argparse.Namespace) -> int:
     allowed_hosts = args.allow_host or [urlparse(spec.url).hostname or ""]
     try:
         result = run_campaign(
-            spec, surface_factory=lambda secrets: PlaywrightSurface(headless=not args.headed, secrets=secrets),
+            spec, surface_factory=lambda secrets: PlaywrightSurface(headless=not args.headed, secrets=secrets,
+                                                                    allowed_hosts=list(allowed_hosts)),
             planner_factory=lambda scenario: make_planner(args), operator=make_operator(args),
             allowed_hosts=allowed_hosts, max_steps=args.max_steps, echo=not args.quiet, spec_path=args.spec,
-            vision_fallback=args.vision_fallback, max_vision_attempts=args.max_vision_attempts)
+            vision_fallback=args.vision_fallback, max_vision_attempts=args.max_vision_attempts,
+            auto_reuse=not args.no_auto_reuse, max_auto_reuses=args.max_auto_reuses, library_dir=args.library_dir)
     except CampaignFailed as error:
         print(f"\nCampaign failed: {error}\nNo artifact was saved. Summary: {error.summary_path}")
         return 2
@@ -226,7 +262,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
         log.event("draft_warning", capability=loaded.name, version=loaded.version, status=loaded.status)
         print(warning)
 
-    surface = PlaywrightSurface(headless=not args.headed, secrets=secrets)
+    surface = PlaywrightSurface(headless=not args.headed, secrets=secrets,
+                                allowed_hosts=list(loaded.surface.get("allowed_hosts") or []) or None)
     escalator = Escalator(make_operator(args), SessionControl(), log)
     try:
         result = run_replay(loaded, params, surface, policy_for(loaded, args.allow_host), escalator, log,
@@ -250,7 +287,8 @@ def cmd_stability(args: argparse.Namespace) -> int:
     try:
         report_path = run_stability(
             args.artifact, params, list(args.sensitive), args.runs,
-            surface_factory=lambda secrets: PlaywrightSurface(headless=not args.headed, secrets=secrets),
+            surface_factory=lambda secrets: PlaywrightSurface(headless=not args.headed, secrets=secrets,
+                                                              allowed_hosts=args.allow_host or None),
             allowed_hosts=args.allow_host or None, echo=not args.quiet)
     except artifact_module.ArtifactError as error:
         print(f"Cannot load artifact: {error}")

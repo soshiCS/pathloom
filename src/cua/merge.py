@@ -26,7 +26,7 @@ from .models import Artifact, GraphEdge, GraphNode, Guard, ScenarioTrace
 
 MERGE_STRATEGY = "prefix_tree"
 COMPATIBILITY_FIELDS = ("name", "description", "surface.kind", "surface.entry_url", "surface.allowed_hosts", "success")
-OUTPUT_CONTRACT = ("type", "required", "pattern")   # what replay parses with; description and example are free text
+OUTPUT_CONTRACT = ("type", "required", "pattern", "items", "min_items", "max_items")   # what replay checks; description and example are free
 
 
 class MergeError(ArtifactError):

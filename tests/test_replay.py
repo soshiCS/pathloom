@@ -223,8 +223,9 @@ def test_action_without_checkpoint_hands_the_screen_to_its_edges():
     result, log = run(FakeSurface(), login_graph(), params={**PARAMS, "password": "wrong"})
     assert result.status == "business_outcome" and result.outcome_code == "invalid_credentials"
     assert result.step_id == "bad_creds"                       # judged by the decision node, not by s4
-    assert events(log, "checkpoint_passed")[-1] == {**events(log, "checkpoint_passed")[-1], "step_id": "s4",
-                                                    "checkpoint": None}
+    # a step that carries no checkpoint says exactly that; it is never reported as a verified one
+    assert events(log, "no_checkpoint_recorded")[-1]["step_id"] == "s4"
+    assert "s4" not in [e["step_id"] for e in events(log, "checkpoint_passed")]
 
 
 def test_success_terminal_verifies_the_top_level_checkpoint():
@@ -642,7 +643,8 @@ def test_executed_path_lists_each_completed_action_node_once_and_attempts_count_
     assert [e["id"] for e in result.executed_path] == [f"s{i}" for i in range(1, 16)]
     assert result.executed_path[1] == {"id": "s2", "action": {"action": "type", "target": {"strategies": [
         {"kind": "role", "role": "textbox", "name": "Username"}, {"kind": "css", "selector": "textbox:Username:"}]},
-        "value": "{{username}}", "checkpoint": None}, "effect": "reversible", "retry_safety": "never_retry"}
+        "value": "{{username}}", "checkpoint": None, "targets": None, "mode": None}, "effect": "reversible",
+        "retry_safety": "never_retry"}
     assert result.performed_attempts == 11                       # navigate, 5 types, 5 clicks; extracts are reads
     assert "standard_user" not in json.dumps(result.executed_path)
 
@@ -717,3 +719,16 @@ def test_replay_never_imports_the_planner_or_the_llm_sdk():
     output = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True).stdout
     assert output.strip() == "[]"
     assert not any(hasattr(replay_module, name) for name in ("Planner", "ClaudePlanner", "OpenAIPlanner"))
+
+
+def test_a_click_the_surface_proves_it_never_dispatched_is_retried_as_not_performed():
+    surface = FakeSurface(faults=["blocked_click:Login"])
+    result, log = run(surface, login_graph(checkpoint={"text_contains": "Products"}, retry="never_retry"))
+    assert result.status == "success" and clicks(surface, "Login") == 1        # the retry was the first real click
+    assert events(log, "recovered")[0] == {**events(log, "recovered")[0], "step_id": "s4", "performed": False}
+    assert events(log, "action_repeated") == [] and result.performed_attempts == 4
+
+    surface = FakeSurface(faults=["lost_click:Login"])                          # unknown: treated as performed
+    result, _ = run(surface, login_graph(checkpoint={"text_contains": "Products"}, retry="never_retry"))
+    assert result.status == "failure" and result.outcome_code == "action_result_uncertain"
+    assert clicks(surface, "Login") == 0 and result.performed_attempts == 4

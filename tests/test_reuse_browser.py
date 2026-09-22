@@ -56,10 +56,10 @@ class Spy(ScriptedPlanner):
         super().__init__(script)
         self.first_screen = None
 
-    def decide(self, goal, params, observation, history):
+    def decide(self, goal, params, observation, history, candidates=()):
         if self.first_screen is None:
             self.first_screen = " ".join(e.text or e.name for e in observation.elements)
-        return super().decide(goal, params, observation, history)
+        return super().decide(goal, params, observation, history, candidates)
 
 
 def test_member_lookup_prefix_opens_the_sub_account_discovery(sandbox, chromium, tmp_path):
@@ -105,9 +105,9 @@ def test_member_lookup_prefix_opens_the_sub_account_discovery(sandbox, chromium,
     assert [n.action.action for n in linear_path(artifact)] == [
         "navigate", "type", "type", "click", "type", "click", "click", "click", "type", "click", "extract", "extract",
         "extract"]
-    assert artifact.provenance["reuse"]["source_name"] == "member_profile_lookup"
-    assert artifact.provenance["reuse"]["imported_nodes"] == 6
-    assert artifact.provenance["reuse"]["planner_decisions"] == 8
+    [forced] = artifact.provenance["reuses"]
+    assert forced["mode"] == "forced_prefix" and forced["source_name"] == "member_profile_lookup"
+    assert forced["imported_nodes"] == 6 and artifact.provenance["planner_decisions"] == 8
     assert artifact.outputs["opening_deposit"]["pattern"] and app.created == []
 
     prefix_path.unlink()                                               # the reusable artifact is gone

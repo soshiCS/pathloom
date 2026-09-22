@@ -21,14 +21,17 @@ class ScriptedStep:
     name: str = ""            # accessible name to match (may contain {{placeholders}})
     context: str = ""         # enclosing item to match, for ambiguous names
     text: str = ""            # text prefix to match, for unnamed text elements
+    texts: list[str] = field(default_factory=list)   # kind "extract_many": one text prefix per item, in order
     value: str | None = None
     output_name: str | None = None
     pattern: str | None = None
     optional: bool = False
+    output_mode: str = "set"      # kind "extract"/"extract_many": set | append
     expect: str | None = None
     outcomes: list[dict] = field(default_factory=list)
-    skip_if_absent: bool = False  # skip silently if the control is not on screen (e.g. a notice)
+    skip_if_absent: bool = False  # skip silently if the control (or candidate) is absent (e.g. a notice)
     stuck_cause: str = "other"    # for "stuck": "missing_control" is the only cause that may lead to vision
+    # kind "reuse": pick the offered verified segment from capability `name`; `value` forces an exact id instead
 
 
 def find_element(observation: Observation, step: ScriptedStep, params: dict) -> Element | None:
@@ -51,17 +54,38 @@ class ScriptedPlanner:
 
     def __init__(self, script: list[ScriptedStep]):
         self.script = list(script)
+        self.chosen: set[str] = set()     # candidate ids already selected: a repeated "reuse" walks an artifact onward
 
-    def decide(self, goal: str, params: dict, observation: Observation, history: list[Action]) -> Action:
+    def decide(self, goal: str, params: dict, observation: Observation, history: list[Action],
+               candidates=()) -> Action:
         while self.script:
             step = self.script[0]
-            if step.kind in ("done", "stuck", "navigate"):
+            if step.kind == "reuse":
+                chosen = step.value or next((c.candidate_id for c in candidates
+                                             if c.source_name == step.name and c.candidate_id not in self.chosen), None)
+                if chosen is None and step.skip_if_absent:
+                    self.script.pop(0)
+                    continue
+                if chosen is None:
+                    return Action(kind="stuck", reason=f"scripted step expected a segment from {step.name!r}",
+                                  stuck_cause="planner")
+                self.script.pop(0)
+                self.chosen.add(chosen)
+                return Action(kind="reuse_candidate", candidate_id=chosen, reason="scripted")
+            if step.kind in ("done", "stuck", "navigate", "back"):
                 self.script.pop(0)
                 cause = ""
                 if step.kind == "stuck":
-                    cause = "perception" if step.stuck_cause == "missing_control" else "planner"
+                    cause = {"missing_control": "perception", "missing_data": "missing_data"}.get(step.stuck_cause, "planner")
                 return Action(kind=step.kind, value=step.value, expect=step.expect, outcomes=step.outcomes,
-                              reason="scripted", stuck_cause=cause)
+                              reason="scripted", stuck_cause=cause, output_name=step.output_name)
+            if step.kind == "extract_many":
+                self.script.pop(0)
+                targets = [find_element(observation, ScriptedStep("extract", step.role, text=text), params)
+                           for text in step.texts]
+                return Action(kind="extract_many", targets=[t for t in targets if t is not None],
+                              output_name=step.output_name, pattern=step.pattern, optional=step.optional,
+                              output_mode=step.output_mode, expect=step.expect, reason="scripted")
             element = find_element(observation, step, params)
             if element is None and step.skip_if_absent:
                 self.script.pop(0)
@@ -71,7 +95,8 @@ class ScriptedPlanner:
                               stuck_cause="planner")
             self.script.pop(0)
             return Action(kind=step.kind, target=element, value=step.value, output_name=step.output_name,
-                          pattern=step.pattern, optional=step.optional, expect=step.expect, reason="scripted")
+                          pattern=step.pattern, optional=step.optional, output_mode=step.output_mode,
+                          expect=step.expect, reason="scripted")
         return Action(kind="stuck", reason="script exhausted before the goal was reached")
 
 
@@ -115,6 +140,15 @@ def visual_click(name: str, expect: str, box=(100, 100, 80, 30), role: str = "bu
 
 
 NO_TARGET = VisualDecision(kind="no_target", reason="scripted: nothing to click")
+
+
+def visual_extract(output_name: str, boxes: list[tuple], confidence: float = 0.9, readings=None) -> VisualDecision:
+    """A scripted visual extraction: boxes in output order. `readings` mimics a model that also reports what it
+    read; the runtime must never use them (they are not part of the decision)."""
+    targets = [VisualTarget(role="text", name=str(reading) if reading is not None else "", x=x, y=y, width=w, height=h,
+                            expect=None, reason="scripted", confidence=confidence)
+               for (x, y, w, h), reading in zip(boxes, readings or [None] * len(boxes))]
+    return VisualDecision(kind="visual_extract", output_name=output_name, boxes=targets, reason="scripted")
 
 
 class ScriptedVisionPlanner(ScriptedPlanner):

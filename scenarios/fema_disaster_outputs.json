@@ -1,0 +1,37 @@
+{
+  "declaration_titles": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {"pattern": "^(.+)$"}
+  },
+  "declaration_numbers": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {"pattern": "^(.+)$"}
+  },
+  "incident_types": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {"pattern": "^(.+)$"}
+  },
+  "declaration_dates": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {"pattern": "^(.+)$"}
+  },
+  "incident_periods": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {"pattern": "^(.+)$"}
+  }
+}

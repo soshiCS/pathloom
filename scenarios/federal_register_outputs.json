@@ -1,0 +1,52 @@
+{
+  "titles": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "^(.+)$"
+    }
+  },
+  "document_numbers": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "(?:Published Document|PUBLISHED DOCUMENT): (\\d{4}-\\d+)"
+    }
+  },
+  "agencies": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "^(.+)$"
+    }
+  },
+  "document_types": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "^(.+)$"
+    }
+  },
+  "publication_dates": {
+    "type": "list",
+    "required": true,
+    "min_items": 3,
+    "max_items": 3,
+    "items": {
+      "type": "string",
+      "pattern": "^(\\d{2}/\\d{2}/\\d{4})$"
+    }
+  }
+}

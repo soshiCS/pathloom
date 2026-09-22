@@ -20,12 +20,16 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import Artifact, GraphAction, GraphEdge, GraphNode, Guard, Locator
+from .models import MAX_EXTRACT_TARGETS, OUTPUT_MODES, Artifact, GraphAction, GraphEdge, GraphNode, Guard, Locator
 from .policy import redact
 
 SCHEMA_VERSION = "2.0"
 ARTIFACTS_DIR = Path("artifacts")
-ACTIONS = {"navigate", "click", "type", "extract"}
+ACTIONS = {"navigate", "back", "click", "type", "select", "extract", "extract_many"}
+READ_ACTIONS = {"extract", "extract_many"}
+OUTPUT_TYPES = {"string", "number", "integer", "list"}
+ITEM_TYPES = {"string", "number", "integer"}
+CARDINALITY_KEYS = ("min_items", "max_items")   # optional bounds on a list output's length
 OUTCOME_KINDS = {"business", "recoverable"}
 NODE_KINDS = {"action", "decision", "terminal"}
 EFFECTS = {"none", "reversible", "irreversible", "unknown"}
@@ -36,6 +40,9 @@ SUCCESS_NODE_ID = "success"
 PLACEHOLDER = re.compile(r"\{\{(\w+)\}\}")
 PLACEHOLDER_TOKEN = re.compile(r"(\{\{\w+\}\})")   # split-friendly: keeps the placeholders as segments
 DETECT_KEYS = ("text_contains", "text_missing", "dialog_contains")
+# What a step checkpoint may assert. Closed: replay refuses a condition it cannot verify rather than
+# skipping it, so an unknown key can never pass vacuously.
+CHECKPOINT_KEYS = ("text_contains", "url_contains", "selection_present", "target_selected", "target_absent")
 RECOVER_ACTIONS = ("click",)
 VERSIONED = re.compile(r"\.v(\d+)\.json$")
 # The payload fields each guard kind carries; every other payload field must be absent.
@@ -51,7 +58,7 @@ GUARD_PAYLOAD = ("input", "value", "pattern", "target")
 ARTIFACT_KEYS = {"schema_version", "name", "version", "status", "description", "surface", "inputs", "outputs",
                  "entry_node", "nodes", "edges", "outcomes", "success", "provenance"}
 NODE_KEYS = {"id", "kind", "action", "effect", "retry_safety", "status", "outcome_code"}
-ACTION_KEYS = {"action", "target", "value", "checkpoint"}
+ACTION_KEYS = {"action", "target", "value", "checkpoint", "targets", "mode"}
 EDGE_KEYS = {"source", "target", "guards", "priority"}
 GUARD_KEYS = {"kind", *GUARD_PAYLOAD}
 LOCATOR_TEXT_FIELDS = ("name", "text", "context")
@@ -90,19 +97,27 @@ def parameterize_text(text: str, params: dict) -> str:
     return text
 
 
-def parameterize_locator(locator: Locator, params: dict) -> Locator:
+def parameterize_locator(locator: Locator, params: dict, keep_structure: bool = False) -> Locator:
     """Locators can depend on inputs too: "the Add to cart button in the {{product_name}} card".
 
-    When a rung depends on an input, the rungs that do not (structural path, coordinates)
-    are dropped: they point at whatever happened to be there during discovery, and falling
-    back to them would silently act on the wrong item for a different input.
+    When a rung depends on an input, coordinates are dropped: they point at whatever happened
+    to be there during discovery. A structural path is retained after the semantic rungs, but
+    replay may use it only to disambiguate controls that already matched a parameterized semantic
+    rung. It can therefore distinguish duplicate rendered copies without becoming a fallback for
+    a different input value.
+
+    `keep_structure` remains accepted for callers recording ordered lists; structural rungs now
+    survive for both lists and single targets under the guarded replay rule above.
     """
     strategies = []
     for strategy in locator.strategies:
         strategies.append({key: (parameterize(value, params) if key in LOCATOR_TEXT_FIELDS else value)
                            for key, value in strategy.items()})
     parameterized = [s for s in strategies if locator_placeholders(s)]
-    return Locator(strategies=parameterized or strategies)
+    if not parameterized:
+        return Locator(strategies=strategies)
+    parameterized += [s for s in strategies if s.get("kind") == "css" and s not in parameterized]
+    return Locator(strategies=parameterized)
 
 
 def locator_placeholders(strategy: dict) -> set[str]:
@@ -133,14 +148,16 @@ def placeholders_in(value: str | None) -> set[str]:
 
 # ---------- classification defaults for discovered actions ----------
 
-def classify_effect(action: str, risky: bool) -> str:
-    """What a discovered action does to the world, from the policy's risk verdict and the action kind."""
-    if risky:
+def classify_effect(action: str, risk) -> str:
+    """What a discovered action does to the world, from the policy's risk verdict ("safe", "risky" or
+    "unknown"; a bare True means risky) and the action kind. An ambiguous verdict on a click is an unknown
+    effect: never repeated automatically, and always confirmed by a person at replay."""
+    if risk is True or risk == "risky":
         return "irreversible"
-    if action in ("navigate", "extract"):
+    if action in ("navigate", "back", "extract", "extract_many"):
         return "none"
-    if action in ("click", "type"):
-        return "reversible"
+    if action in ("click", "type", "select"):
+        return "unknown" if risk == "unknown" else "reversible"
     return "unknown"
 
 
@@ -149,13 +166,14 @@ def classify_retry_safety(action: str, effect: str, checkpoint: dict | None) -> 
 
     An irreversible or unknown effect is never repeated automatically. A read-only extraction
     is safe. An action with no lasting effect or a reversible one whose checkpoint can be
-    verified first is retried only after that verification. A click or type without a
-    checkpoint is never repeated: nothing could tell whether it already took effect. A
-    navigation without a checkpoint is safe: reloading a page changes nothing.
+    verified first is retried only after that verification. A click, type or back without a
+    checkpoint is never repeated: nothing could tell whether it already took effect (a second
+    "back" would leave the page it should have arrived at). A navigation without a checkpoint is
+    safe: reloading a page changes nothing.
     """
     if effect in NO_AUTOMATIC_RETRY:
         return "never_retry"
-    if action == "extract":
+    if action in READ_ACTIONS:
         return "safe"
     if checkpoint:
         return "verify_before_retry"
@@ -285,12 +303,118 @@ def validate_contract(artifact) -> None:
         raise ArtifactError("surface.entry_url is required")
     if not artifact.success:
         raise ArtifactError("success checkpoint is required")
-    validate_placeholders(artifact.success, set(artifact.inputs), "success checkpoint")
+    validate_checkpoint(artifact.success, set(artifact.inputs), "success checkpoint")
     for outcome in artifact.outcomes:
         validate_outcome(outcome)
     for name, spec in artifact.outputs.items():
-        if "type" not in spec:
-            raise ArtifactError(f"output {name!r} has no type")
+        validate_output_spec(name, spec)
+
+
+def validate_output_spec(name: str, spec) -> None:
+    """A scalar output (string, number, integer, with an optional regex) or an ordered list output whose
+    `items` say how every element is parsed (a scalar type and an optional regex)."""
+    if not isinstance(spec, dict) or "type" not in spec:
+        raise ArtifactError(f"output {name!r} has no type")
+    if spec["type"] not in OUTPUT_TYPES:
+        raise ArtifactError(f"output {name!r}: type must be one of {sorted(OUTPUT_TYPES)}, got {spec['type']!r}")
+    if spec["type"] == "list":
+        items = spec.get("items")
+        if not isinstance(items, dict) or items.get("type") not in ITEM_TYPES:
+            raise ArtifactError(f"output {name!r}: a list output needs items with a type in {sorted(ITEM_TYPES)}")
+        _validate_pattern(items.get("pattern"), f"output {name!r} items")
+        validate_cardinality(spec, f"output {name!r}")
+    elif "items" in spec:
+        raise ArtifactError(f"output {name!r}: only a list output carries items")
+    elif any(key in spec for key in CARDINALITY_KEYS):
+        raise ArtifactError(f"output {name!r}: only a list output carries min_items or max_items")
+    _validate_pattern(spec.get("pattern"), f"output {name!r}")
+
+
+def validate_cardinality(spec: dict, where: str) -> None:
+    """min_items and max_items, when present, are non-negative integers with min <= max and max >= 1."""
+    for key in CARDINALITY_KEYS:
+        value = spec.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ArtifactError(f"{where}: {key} must be a non-negative integer")
+    low, high = spec.get("min_items"), spec.get("max_items")
+    if high is not None and high < 1:
+        raise ArtifactError(f"{where}: max_items must be at least 1")
+    if low is not None and high is not None and low > high:
+        raise ArtifactError(f"{where}: min_items {low} exceeds max_items {high}")
+
+
+def output_problems(outputs: dict, values: dict) -> dict[str, str]:
+    """Which declared outputs the final values do not satisfy, and why (names and counts only, never a value).
+
+    A required output must be present and non-null; an optional one may be absent or null. A scalar must fit its
+    declared type; a list must be a list whose every item fits the items type and whose length lies within
+    min_items and max_items when they are declared. Patterns are enforced where a value is read (the value is the
+    pattern's own capture), so they are not re-applied here.
+    """
+    problems: dict[str, str] = {}
+    for name, spec in outputs.items():
+        value = values.get(name)
+        if value is None:
+            if spec.get("required", True):
+                problems[name] = "missing"
+            continue
+        if spec.get("type") == "list":
+            problem = list_problem(spec, value)
+        else:
+            problem = None if fits_type(value, spec.get("type", "string")) else f"not a {spec.get('type')}"
+        if problem:
+            problems[name] = problem
+    return problems
+
+
+def list_problem(spec: dict, value) -> str | None:
+    if not isinstance(value, list):
+        return "not a list"
+    item_type = (spec.get("items") or {}).get("type", "string")
+    bad = [index for index, item in enumerate(value) if not fits_type(item, item_type)]
+    if bad:
+        return f"item {bad[0]} is not a {item_type}"
+    low, high = spec.get("min_items"), spec.get("max_items")
+    if low is not None and len(value) < low:
+        return f"{len(value)} item(s), at least {low} required"
+    if high is not None and len(value) > high:
+        return f"{len(value)} item(s), at most {high} allowed"
+    return None
+
+
+def fits_type(value, kind: str) -> bool:
+    """A typed value, or the text it was read as (discovery keeps examples as text), fits the declared type.
+    An example that carries an input placeholder (`{{name}}`, possibly inside surrounding text such as a
+    currency format: the value read came from that input) is typed by the input, not judged here."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, str):
+        if PLACEHOLDER.search(value):
+            return True
+        plain = re.sub(r"^[$€£]", "", value.replace(",", "").replace(" ", ""))
+        if kind == "integer":
+            return bool(re.fullmatch(r"-?\d+", plain))
+        if kind == "number":
+            return bool(re.fullmatch(r"-?\d+(\.\d+)?", plain))
+        return bool(value.strip())
+    if kind == "integer":
+        return isinstance(value, int)
+    if kind == "number":
+        return isinstance(value, (int, float))
+    return False
+
+
+def _validate_pattern(pattern, where: str) -> None:
+    if pattern is None:
+        return
+    if not isinstance(pattern, str):
+        raise ArtifactError(f"{where}: pattern must be a string")
+    try:
+        re.compile(pattern)
+    except re.error as error:
+        raise ArtifactError(f"{where}: pattern is not a valid regex: {error}") from error
 
 
 def validate_inputs(inputs: dict) -> None:
@@ -334,23 +458,67 @@ def validate_action(action: GraphAction, declared_inputs: set[str], outputs: dic
         raise ArtifactError(f"{where}: unknown action {action.action!r}")
     if action.action == "navigate" and not action.value:
         raise ArtifactError(f"{where}: navigate needs a url value")
-    if action.action in ("click", "type", "extract") and not (action.target and action.target.strategies):
+    if action.action == "back" and (action.target is not None or action.value is not None):
+        raise ArtifactError(f"{where}: back carries no target and no value (it returns to the previous page)")
+    if action.action in ("click", "type", "select", "extract") and not (action.target and action.target.strategies):
         raise ArtifactError(f"{where}: {action.action} needs a target locator")
-    if action.action == "type" and action.value is None:
-        raise ArtifactError(f"{where}: type needs a value")
-    if action.action == "extract" and action.value not in outputs:
-        raise ArtifactError(f"{where}: extract writes undeclared output {action.value!r}")
+    if action.action in ("type", "select") and action.value is None:
+        raise ArtifactError(f"{where}: {action.action} needs a value")
+    if action.action in READ_ACTIONS and action.value not in outputs:
+        raise ArtifactError(f"{where}: {action.action} writes undeclared output {action.value!r}")
+    if action.mode is not None and action.mode not in OUTPUT_MODES:
+        raise ArtifactError(f"{where}: unknown output mode {action.mode!r}")
+    if action.mode is not None and action.action not in READ_ACTIONS:
+        raise ArtifactError(f"{where}: only extract and extract_many carry an output mode")
+    if action.action in READ_ACTIONS:
+        _validate_output_mode(action, outputs, where)
+    if action.action == "extract_many":
+        _validate_many_targets(action, outputs, where)
+    elif action.targets is not None:
+        raise ArtifactError(f"{where}: only extract_many carries targets")
     unknown = placeholders_in(action.value) - declared_inputs
     if unknown:
         raise ArtifactError(f"{where}: placeholders {sorted(unknown)} are not declared inputs")
-    if action.target:
-        for strategy in action.target.strategies:
+    for ladder in ([action.target] if action.target else []) + list(action.targets or []):
+        for strategy in ladder.strategies:
             for key in LOCATOR_TEXT_FIELDS:
                 unknown = placeholders_in(str(strategy.get(key, ""))) - declared_inputs
                 if unknown:
                     raise ArtifactError(f"{where}: locator placeholders {sorted(unknown)} are not declared inputs")
     if action.checkpoint:
-        validate_placeholders(action.checkpoint, declared_inputs, f"{where} checkpoint")
+        validate_checkpoint(action.checkpoint, declared_inputs, f"{where} checkpoint")
+
+
+def _validate_output_mode(action: GraphAction, outputs: dict, where: str) -> None:
+    """set assigns a scalar (extract) or a whole list (extract_many) once; append adds to a list output."""
+    kind = outputs[action.value].get("type")
+    if action.mode == "append":
+        if kind != "list":
+            raise ArtifactError(f"{where}: append adds to a list, but output {action.value!r} is {kind!r}")
+        return
+    if action.action == "extract" and kind == "list":
+        raise ArtifactError(f"{where}: extract reads one value, but output {action.value!r} is a list "
+                            f"(use extract_many, or mode append to add one item)")
+
+
+def _validate_many_targets(action: GraphAction, outputs: dict, where: str) -> None:
+    """extract_many: an ordered, bounded, duplicate-free list of ladders into one list output."""
+    if action.target is not None:
+        raise ArtifactError(f"{where}: extract_many uses targets, not a single target")
+    if not isinstance(action.targets, list) or not action.targets:
+        raise ArtifactError(f"{where}: extract_many needs a non-empty list of targets")
+    if len(action.targets) > MAX_EXTRACT_TARGETS:
+        raise ArtifactError(f"{where}: extract_many may read at most {MAX_EXTRACT_TARGETS} targets, "
+                            f"got {len(action.targets)}")
+    seen: list = []
+    for index, ladder in enumerate(action.targets):
+        if not isinstance(ladder, Locator) or not ladder.strategies:
+            raise ArtifactError(f"{where}: target {index} needs a locator with at least one strategy")
+        if ladder.strategies in seen:
+            raise ArtifactError(f"{where}: target {index} duplicates an earlier target")
+        seen.append(ladder.strategies)
+    if outputs[action.value].get("type") != "list":
+        raise ArtifactError(f"{where}: extract_many writes output {action.value!r}, which is not a list")
 
 
 def validate_placeholders(checkpoint: dict, declared_inputs: set[str], where: str) -> None:
@@ -358,6 +526,23 @@ def validate_placeholders(checkpoint: dict, declared_inputs: set[str], where: st
         unknown = placeholders_in(str(value)) - declared_inputs
         if unknown:
             raise ArtifactError(f"{where}: placeholders {sorted(unknown)} are not declared inputs")
+
+
+def validate_checkpoint(checkpoint: dict, declared_inputs: set[str], where: str) -> None:
+    """Every condition in a checkpoint is one this engine can verify, on declared inputs only.
+
+    The vocabulary is closed on purpose: a condition replay does not understand would otherwise sit in an
+    artifact and be silently skipped, which is the same as having no checkpoint while looking like proof.
+    """
+    if not isinstance(checkpoint, dict):
+        raise ArtifactError(f"{where}: must be an object of conditions")
+    unknown_keys = sorted(set(checkpoint) - set(CHECKPOINT_KEYS))
+    if unknown_keys:
+        raise ArtifactError(f"{where}: unknown condition(s) {unknown_keys}; supported: {sorted(CHECKPOINT_KEYS)}")
+    for key, value in checkpoint.items():
+        if not isinstance(value, str):
+            raise ArtifactError(f"{where}: condition {key!r} needs a string")
+    validate_placeholders(checkpoint, declared_inputs, where)
 
 
 def validate_outcome(outcome: dict) -> None:
@@ -612,11 +797,20 @@ def action_from_dict(raw, where: str) -> GraphAction:
     _reject_unknown_keys(raw, ACTION_KEYS, where)
     target = None
     if raw["target"] is not None:
-        strategies = _object(raw["target"], f"{where} target").get("strategies")
-        if not isinstance(strategies, list):
-            raise ArtifactError(f"{where} target needs a strategies list")
-        target = Locator(strategies=strategies)
-    return GraphAction(action=raw["action"], target=target, value=raw.get("value"), checkpoint=raw.get("checkpoint"))
+        target = _locator_from(raw["target"], f"{where} target")
+    targets = None
+    if raw.get("targets") is not None:
+        targets = [_locator_from(item, f"{where} target {index}")
+                   for index, item in enumerate(_list(raw["targets"], f"{where} targets"))]
+    return GraphAction(action=raw["action"], target=target, value=raw.get("value"), checkpoint=raw.get("checkpoint"),
+                       targets=targets, mode=raw.get("mode"))
+
+
+def _locator_from(raw, where: str) -> Locator:
+    strategies = _object(raw, where).get("strategies")
+    if not isinstance(strategies, list) or not all(isinstance(s, dict) for s in strategies):
+        raise ArtifactError(f"{where} needs a strategies list")
+    return Locator(strategies=strategies)
 
 
 def edge_from_dict(raw, where: str) -> GraphEdge:

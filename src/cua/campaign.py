@@ -20,7 +20,8 @@ from typing import Callable
 
 from . import artifact as artifact_module
 from .agent import DEFAULT_MAX_STEPS, DEFAULT_MAX_VISION_ATTEMPTS, DiscoveryFailed
-from .artifact import ArtifactError, linear_path, save_artifact, validate_outcome
+from .library import DEFAULT_MAX_AUTO_REUSES
+from .artifact import CARDINALITY_KEYS, ArtifactError, linear_path, save_artifact, validate_outcome
 from .escalation import Escalator, Operator, SessionControl
 from .evidence import RunLog
 from .merge import MergeError, merge_traces
@@ -34,8 +35,9 @@ SPEC_KEYS = {"name", "goal", "url", "selectors", "scenarios"}
 OPTIONAL_SPEC_KEYS = {"outputs", "outcomes", "reuse_capability", "reuse_artifact"}
 OUTCOME_SPEC_KEYS = {"code", "kind", "detect", "recover", "source"}
 SCENARIO_KEYS = {"name", "params", "sensitive"}
-OUTPUT_KEYS = {"type", "required", "pattern", "description"}
-OUTPUT_TYPES = {"string", "number", "integer"}
+OUTPUT_KEYS = {"type", "required", "pattern", "description", "items", "min_items", "max_items"}
+OUTPUT_TYPES = {"string", "number", "integer", "list"}
+ITEM_KEYS = {"type", "pattern"}
 IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*")
 
 
@@ -168,16 +170,61 @@ def outputs_from_dict(raw) -> dict:
             raise CampaignError(f"{where}: type must be one of {sorted(OUTPUT_TYPES)}")
         if not isinstance(spec.get("required", True), bool):
             raise CampaignError(f"{where}: required must be true or false")
-        pattern = spec.get("pattern")
-        if not isinstance(pattern, str) or not pattern:
-            raise CampaignError(f"{where}: a regex pattern is required")
+        if spec.get("type") == "list":
+            outputs[name] = {"type": "list", "required": spec.get("required", True),
+                             "items": list_items_from_dict(spec.get("items"), where)}
+            outputs[name].update({key: spec[key] for key in CARDINALITY_KEYS if key in spec})
+            if "pattern" in spec:
+                raise CampaignError(f"{where}: a list output takes its pattern inside items")
+        else:
+            if "items" in spec:
+                raise CampaignError(f"{where}: only a list output carries items")
+            if any(key in spec for key in CARDINALITY_KEYS):
+                raise CampaignError(f"{where}: only a list output carries min_items or max_items")
+            outputs[name] = {"type": spec.get("type", "string"), "required": spec.get("required", True),
+                             "pattern": checked_pattern(spec.get("pattern"), where)}
         try:
-            re.compile(pattern)
-        except re.error as error:
-            raise CampaignError(f"{where}: pattern is not a valid regex: {error}") from error
-        outputs[name] = {"type": spec.get("type", "string"), "required": spec.get("required", True),
-                         "pattern": pattern}
+            artifact_module.validate_output_spec(name, outputs[name])   # one rule set for specs and artifacts
+        except ArtifactError as error:
+            raise CampaignError(str(error)) from error
     return outputs
+
+
+def load_output_contract(path: str | Path) -> dict:
+    """The output contract of a direct discovery: a JSON object keyed by output name, in the artifact's own
+    output shape (the same object a campaign spec carries under `outputs`)."""
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise CampaignError(f"cannot read output contract {path}: {error}") from error
+    if isinstance(raw, dict) and set(raw) == {"outputs"}:
+        raw = raw["outputs"]
+    outputs = outputs_from_dict(raw)
+    if not outputs:
+        raise CampaignError(f"output contract {path} declares no outputs")
+    return outputs
+
+
+def list_items_from_dict(raw, where: str) -> dict:
+    """The per-item rule of a list output: a scalar type and the regex every item is parsed with."""
+    if not isinstance(raw, dict):
+        raise CampaignError(f"{where}: a list output needs an items object")
+    unknown = set(raw) - ITEM_KEYS
+    if unknown:
+        raise CampaignError(f"{where}: items has unknown keys: {sorted(unknown)}")
+    if raw.get("type", "string") not in OUTPUT_TYPES - {"list"}:
+        raise CampaignError(f"{where}: items type must be one of {sorted(OUTPUT_TYPES - {'list'})}")
+    return {"type": raw.get("type", "string"), "pattern": checked_pattern(raw.get("pattern"), f"{where} items")}
+
+
+def checked_pattern(pattern, where: str) -> str:
+    if not isinstance(pattern, str) or not pattern:
+        raise CampaignError(f"{where}: a regex pattern is required")
+    try:
+        re.compile(pattern)
+    except re.error as error:
+        raise CampaignError(f"{where}: pattern is not a valid regex: {error}") from error
+    return pattern
 
 
 def scenario_from_dict(raw, index: int, selectors: list[str]) -> Scenario:
@@ -228,8 +275,12 @@ def run_campaign(
     spec_path: str = "",
     vision_fallback: bool = False,
     max_vision_attempts: int = DEFAULT_MAX_VISION_ATTEMPTS,
+    auto_reuse: bool = True,
+    max_auto_reuses: int = DEFAULT_MAX_AUTO_REUSES,
+    library_dir: str | None = None,
 ) -> CampaignResult:
-    """Discover every scenario in order, each on a fresh session, then merge and save one draft graph.
+    """Discover every scenario in order, each on a fresh session with its own artifact library, then merge
+    and save one draft graph.
 
     Raises CampaignFailed (with the summary written and all evidence kept) if any scenario fails
     or the traces cannot be merged; previously saved artifacts are never touched.
@@ -256,7 +307,7 @@ def run_campaign(
         try:
             traces.append(discover_scenario(spec, scenario, record, surface_factory, planner_factory, operator,
                                             allowed_hosts, max_steps, echo, vision_fallback, max_vision_attempts,
-                                            reuse))
+                                            reuse, auto_reuse, max_auto_reuses, library_dir))
         except Exception as error:   # DiscoveryFailed, or anything the provider, planner, or browser threw
             # Error text may quote a typed value: redact before it reaches the summary or the exception.
             why = redact(str(error), secrets)
@@ -291,8 +342,9 @@ def run_campaign(
 def discover_scenario(spec: CampaignSpec, scenario: Scenario, record: dict, surface_factory, planner_factory,
                       operator: Operator, allowed_hosts: list[str], max_steps: int, echo: bool,
                       vision_fallback: bool = False, max_vision_attempts: int = DEFAULT_MAX_VISION_ATTEMPTS,
-                      reuse: ReusePlan | None = None) -> ScenarioTrace:
-    """One ordinary discovery run: its own log, session(s), planner, policy and escalation.
+                      reuse: ReusePlan | None = None, auto_reuse: bool = True,
+                      max_auto_reuses: int = DEFAULT_MAX_AUTO_REUSES, library_dir: str | None = None) -> ScenarioTrace:
+    """One ordinary discovery run: its own log, session(s), planner, policy, escalation and artifact library.
 
     The reuse orchestrator opens and closes the session(s): the reused prefix and the discovery
     share one, a failed reuse gets a fresh one. Any failure (a stopped discovery, a provider
@@ -311,7 +363,8 @@ def discover_scenario(spec: CampaignSpec, scenario: Scenario, record: dict, surf
                                     output_contract=spec.outputs, selectors=set(spec.selectors),
                                     extra_outcomes=[dict(o) for o in spec.outcomes],
                                     vision=planner if vision_fallback else None,
-                                    max_vision_attempts=max_vision_attempts)
+                                    max_vision_attempts=max_vision_attempts, auto_reuse=auto_reuse,
+                                    max_auto_reuses=max_auto_reuses, library_dir=library_dir)
         if spec.outcomes:
             # discover() appends the reviewer's outcomes as given; reconcile with what the planner declared.
             recorded = [o for o in built.outcomes if not (o.get("source") == "reviewer" and o in spec.outcomes)]

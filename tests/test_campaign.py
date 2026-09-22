@@ -179,9 +179,25 @@ def test_the_declared_output_contract_wins_over_the_planner_and_is_enforced():
             script[-2] = ScriptedStep("extract", "text", text="Tax:", output_name="tax", pattern=MONEY)
         return ScriptedPlanner(script)
 
-    with pytest.raises(CampaignFailed, match="scenario 'url_phone' failed: recorded outputs \\['tax'\\] do not "
-                                             "match the declared contract \\['total'\\]"):
+    # The declared total was never read: done is refused (the history names the missing output), the script has
+    # nothing left, and the scenario ends through the ordinary stuck handoff rather than with a wrong artifact.
+    with pytest.raises(CampaignFailed, match="scenario 'url_phone' failed: human aborted discovery") as failed:
         run(spec_data(outputs=TOTAL_CONTRACT), planner_factory=other_output)
+    summary = failing_summary(failed)
+    log = (evidence_module.EVIDENCE_DIR / summary["scenarios"][2]["run_id"] / "run.jsonl").read_text()
+    assert '"event": "done_rejected", "outputs": {"total": "missing"}' in log
+
+    def extra_output(scenario):
+        script = campaign_script(scenario.params["cart_route"], scenario.params["zip_source"])
+        if scenario.name == "url_phone":
+            script.insert(-1, ScriptedStep("extract", "text", text="Tax:", output_name="tax", pattern=MONEY))
+        return ScriptedPlanner(script)
+
+    # An undeclared name is refused before it is read: the scenario records only the declared output and succeeds.
+    result, _ = run(spec_data(outputs=TOTAL_CONTRACT), planner_factory=extra_output)
+    assert sorted(result.graph.outputs) == ["total"]
+    log = (evidence_module.EVIDENCE_DIR / result.scenarios[2]["run_id"] / "run.jsonl").read_text()
+    assert "output 'tax' is not declared in the output contract; the only valid output names are ['total']" in log
 
 
 def test_spec_file_errors_are_reported(tmp_path):
@@ -360,7 +376,7 @@ class ExplodingPlanner(ScriptedPlanner):
         super().__init__([])
         self.message = message
 
-    def decide(self, goal, params, observation, history) -> Action:
+    def decide(self, goal, params, observation, history, candidates=()) -> Action:
         raise ConnectionError(self.message)
 
 
